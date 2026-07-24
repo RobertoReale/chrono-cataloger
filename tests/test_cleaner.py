@@ -18,6 +18,14 @@ def test_normalize_strip_query_true():
     assert normalize_url("https://x.com/a?b=c", strip_query=True) == "https://x.com/a"
 
 
+def test_normalize_keeps_content_params_even_when_stripping():
+    # without ?v=... every video would normalize to the same "youtube.com/watch"
+    out = normalize_url(
+        "https://www.youtube.com/watch?v=abc&pp=track&list=xyz", strip_query=True
+    )
+    assert out == "https://youtube.com/watch?v=abc"
+
+
 def test_normalize_keeps_meaningful_query_when_not_stripping():
     out = normalize_url("https://youtube.com/watch?v=abc&utm_source=x", strip_query=False)
     assert "v=abc" in out
@@ -30,6 +38,16 @@ def test_domain_blacklist():
     out = clean(entries, cfg)
     assert len(out) == 1
     assert "good.com" in out[0].normalized_url
+
+
+def test_non_web_schemes_are_dropped():
+    entries = [
+        _entry("chrome-extension://bbomjaikkcabgmfaomdichgcodnaeecf/panel.html"),
+        _entry("file:///C:/Users/x/report.pdf"),
+        _entry("https://good.com/a"),
+    ]
+    out = clean(entries, {"strip_query_params": True})
+    assert [e.normalized_url for e in out] == ["https://good.com/a"]
 
 
 def test_keyword_blacklist_uses_original_url():

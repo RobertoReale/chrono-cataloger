@@ -37,6 +37,12 @@ _TRACKING_PARAMS = {
 # Prefixes that mark a param as tracking-related (e.g. utm_source, utm_medium...).
 _TRACKING_PREFIXES = ("utm_",)
 
+# Params that identify the content itself: without them the URL points to nothing
+# in particular (youtube.com/watch?v=... is THE video). Kept even when
+# ``strip_query_params`` is on, otherwise every YouTube video in the history
+# would collapse into a single "youtube.com/watch" entry.
+_CONTENT_PARAMS = {"v", "id"}
+
 
 def _is_tracking_param(key: str) -> bool:
     lk = key.lower()
@@ -51,8 +57,8 @@ def normalize_url(url: str, strip_query: bool = True) -> str:
     - lowercases scheme and host;
     - removes ``www.``;
     - removes the fragment (#...);
-    - removes tracking params (always) and — if ``strip_query`` — the whole
-      query string;
+    - removes tracking params (always) and — if ``strip_query`` — the whole query
+      string except the params that identify the content itself (``v``, ``id``);
     - removes the trailing slash from the path (except for the root).
     """
     if not url:
@@ -68,12 +74,12 @@ def normalize_url(url: str, strip_query: bool = True) -> str:
     if len(path) > 1 and path.endswith("/"):
         path = path.rstrip("/")
 
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
     if strip_query:
-        query = ""
+        kept = [(k, v) for k, v in pairs if k.lower() in _CONTENT_PARAMS]
     else:
-        kept = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
-                if not _is_tracking_param(k)]
-        query = urlencode(kept)
+        kept = [(k, v) for k, v in pairs if not _is_tracking_param(k)]
+    query = urlencode(kept)
 
     # the fragment is always discarded
     return urlunsplit((scheme, netloc, path, query, ""))
@@ -118,6 +124,11 @@ def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
     for e in entries:
         norm = normalize_url(e.url, strip_query=strip_query)
         if not norm:
+            continue
+
+        # Only real web pages: chrome-extension://, file://, data:... are internal
+        # navigations, they have no domain and nothing to learn from.
+        if urlsplit(norm).scheme not in ("http", "https"):
             continue
 
         domain = _domain_of(norm)
