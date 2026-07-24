@@ -91,5 +91,9 @@ classification:
 output:
   base_dir: "./Study_Archive"
   group_by: month                  # month | week | days:N | all (overridable from the CLI)
-  file_format: txt                 # txt | md
+  file_format: txt                 # txt | md | md_rich
+  # txt      -> plain lines
+  # md       -> bullet list
+  # md_rich  -> structured markdown: a heading, a table (date / summary / source)
+  #             and a README.md index per period folder
   # Files are named after the category slug, one file per category per period.

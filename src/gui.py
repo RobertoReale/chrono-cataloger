@@ -424,7 +424,14 @@ def _tab_run(cfg: dict) -> None:
                  help="\n\n".join(f"**{k}** — {v}" for k, v in GROUP_BY_HELP.items()))
     if st.session_state.group_by_kind == "days:N":
         o3.number_input("N days", min_value=1, step=1, key="group_by_n")
-    o3.selectbox("File format", ["txt", "md"], key="file_format")
+    o3.selectbox(
+        "File format", ["txt", "md", "md_rich"], key="file_format",
+        help="**txt** — one plain line per entry.\n\n"
+             "**md** — a bullet list.\n\n"
+             "**md_rich** — organized markdown: a heading per category, a table "
+             "(date / what I learned / source) and a `README.md` index in every "
+             "period folder.",
+    )
 
     st.divider()
     plan = _plan(cfg)
@@ -668,6 +675,11 @@ def _tab_output(cfg: dict) -> None:
         st.info("This period contains no file.")
         return
 
+    rendered = st.toggle(
+        "Render markdown", value=True,
+        help="Show .md files formatted (tables included) instead of raw text.",
+    )
+
     for f in files:
         try:
             text = f.read_text(encoding="utf-8")
@@ -676,7 +688,10 @@ def _tab_output(cfg: dict) -> None:
             continue
         count = len([line for line in text.splitlines() if line.strip()])
         with st.expander(f"{f.name} — {count} line(s)"):
-            st.text(text or "(empty)")
+            if rendered and f.suffix == ".md" and text:
+                st.markdown(text)
+            else:
+                st.text(text or "(empty)")
             st.download_button(
                 "Download", text, file_name=f.name, key=f"dl_{period.name}_{f.name}"
             )

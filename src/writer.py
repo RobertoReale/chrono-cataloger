@@ -29,6 +29,33 @@ def slugify(name: str) -> str:
     return ascii_str or "uncategorized"
 
 
+def _md_cell(text: str) -> str:
+    """Make a string safe inside a markdown table cell (no pipes, no newlines)."""
+    return re.sub(r"\s+", " ", text.replace("|", "\\|")).strip()
+
+
+def _link_label(url: str) -> str:
+    """Short, readable label for a link: the domain, without the ``www.`` prefix."""
+    m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://(?:www\.)?([^/?#]+)", url)
+    return m.group(1) if m else url
+
+
+def _is_data_row(line: str) -> bool:
+    """True for a table row written by ``_format_table_row`` (not header/separator)."""
+    return bool(re.match(r"^\| (?:\d{4}-\d{2}-\d{2}|—) \|", line))
+
+
+def _first_heading(path: Path) -> str:
+    """The ``# Title`` of a markdown file, if present."""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("# "):
+                return line[2:].strip()
+    except OSError:
+        pass
+    return ""
+
+
 def _hash_entry(normalized_url: str, category: str) -> str:
     h = hashlib.sha256(f"{normalized_url}\x00{category}".encode("utf-8"))
     return h.hexdigest()
@@ -94,9 +121,11 @@ class Writer:
         raise ValueError(f"invalid group_by: {self.group_by!r}")
 
     # --- Line formatting -------------------------------------------------- #
-    def format_line(self, entry: ClassifiedEntry) -> str:
+    def format_line(self, entry: ClassifiedEntry, visit: datetime | None = None) -> str:
         summary = entry.summary.strip()
         url = (entry.url or "").strip()
+        if self.file_format == "md_rich":
+            return self._format_table_row(entry, visit)
         if url:
             text = f"{summary} ({url})"
         else:
@@ -104,6 +133,53 @@ class Writer:
         if self.file_format == "md":
             return f"- {text}"
         return text
+
+    def _format_table_row(self, entry: ClassifiedEntry, visit: datetime | None) -> str:
+        date = visit.astimezone(timezone.utc).strftime("%Y-%m-%d") if visit else "—"
+        summary = _md_cell(entry.summary)
+        url = (entry.url or "").strip()
+        source = f"[{_md_cell(_link_label(url))}]({url})" if url else "—"
+        return f"| {date} | {summary} | {source} |"
+
+    def _file_header(self, category: str, bucket: str) -> str:
+        """Front matter written once, when a ``md_rich`` file is first created."""
+        return (
+            f"# {category}\n\n"
+            f"*Period: {bucket}* · *Source: Chrome history*\n\n"
+            "| Date | What I learned | Source |\n"
+            "| --- | --- | --- |\n"
+        )
+
+    # --- Index ------------------------------------------------------------ #
+    @staticmethod
+    def _count_rows(file_path: Path) -> int:
+        """Number of data rows in a ``md_rich`` table (header and separator excluded)."""
+        try:
+            lines = file_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return 0
+        return sum(1 for line in lines if _is_data_row(line))
+
+    def _write_index(self, folder: Path, bucket: str) -> None:
+        """(Re)generate ``README.md``: one table with the categories of the period."""
+        files = sorted(
+            p for p in folder.glob("*.md") if p.name != "README.md"
+        )
+        rows = []
+        total = 0
+        for p in files:
+            title = _first_heading(p) or p.stem
+            count = self._count_rows(p)
+            total += count
+            rows.append(f"| [{_md_cell(title)}]({p.name}) | {count} |")
+
+        content = (
+            f"# {bucket}\n\n"
+            f"*{total} entries across {len(files)} categories.*\n\n"
+            "| Category | Entries |\n"
+            "| --- | ---: |\n" + "\n".join(rows) + "\n"
+        )
+        (folder / "README.md").write_text(content, encoding="utf-8")
 
     # --- Writing ---------------------------------------------------------- #
     def write(self, entries: list[ClassifiedEntry]) -> int:
@@ -113,6 +189,8 @@ class Writer:
         """
         # Group by (bucket, category), accumulating the new lines.
         buckets: dict[tuple[str, str], list[str]] = {}
+        # Original category names, kept for the headings of the md_rich files.
+        cat_names: dict[str, str] = {}
         newly_processed: list[str] = []
 
         for entry in entries:
@@ -128,23 +206,32 @@ class Writer:
                 visit = webkit_micros_to_datetime(entry.last_visit_micros)
 
             bucket = self.bucket_name(visit)
-            key = (bucket, slugify(entry.category))
-            buckets.setdefault(key, []).append(self.format_line(entry))
+            cat_slug = slugify(entry.category)
+            key = (bucket, cat_slug)
+            buckets.setdefault(key, []).append(self.format_line(entry, visit))
+            cat_names.setdefault(cat_slug, entry.category)
 
             self.processed.add(h)
             newly_processed.append(h)
 
         # Actual append to disk.
-        ext = "md" if self.file_format == "md" else "txt"
+        ext = "txt" if self.file_format == "txt" else "md"
         written = 0
         for (bucket, cat_slug), lines in buckets.items():
             folder = self.base_dir / bucket
             folder.mkdir(parents=True, exist_ok=True)
             file_path = folder / f"{cat_slug}.{ext}"
+            is_new = not file_path.exists()
             with file_path.open("a", encoding="utf-8") as f:
+                if is_new and self.file_format == "md_rich":
+                    f.write(self._file_header(cat_names[cat_slug], bucket))
                 for line in lines:
                     f.write(line + "\n")
                     written += 1
+
+        if self.file_format == "md_rich":
+            for bucket in {b for b, _ in buckets}:
+                self._write_index(self.base_dir / bucket, bucket)
 
         if newly_processed:
             save_processed_ids(self.processed_ids_path, self.processed)

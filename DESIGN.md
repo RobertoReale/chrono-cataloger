@@ -41,7 +41,28 @@ Formatting rules:
 - One line per entry.
 - The line is a **readable summary** written by the LLM (max ~20 words), not the raw Chrome page title.
 - The URL goes in parentheses only when useful to find the source again (video, specific page).
-- No markdown markup/bullet lists unless the user asks for it in the config (`file_format: md`).
+- No markdown markup/bullet lists unless the user asks for it in the config
+  (`file_format: md` for a bullet list, `md_rich` for a structured document).
+
+With `file_format: md_rich` the layout changes: each category file starts with a
+`# Category` heading and a table, and every period folder holds a regenerated
+`README.md` index.
+
+```
+Study_Archive/2026-07/
+├── README.md            # index: category -> file, with entry counts
+└── books.md
+```
+
+```markdown
+# Books
+
+*Period: 2026-07* · *Source: Chrome history*
+
+| Date | What I learned | Source |
+| --- | --- | --- |
+| 2026-07-10 | Spinoza equates God with Nature | [plato.stanford.edu](https://plato.stanford.edu/entries/spinoza/) |
+```
 
 Default categories (customizable in the config, not in the code):
 - Philosophy and History
@@ -243,7 +264,7 @@ classification:
 output:
   base_dir: "./Study_Archive"
   group_by: month                  # month | week | days:N | all (overridable from the CLI)
-  file_format: txt                 # txt | md
+  file_format: txt                 # txt | md | md_rich
 ```
 
 Output files are named after the category slug: one file per category per period.
@@ -318,7 +339,10 @@ def get_client(provider: str) -> LLMClient:
 ### 8.7 `writer.py`
 - Takes `--group-by` to decide which sub-folder/file each classified entry goes into, based on the entry's original `last_visit_time` (not on the processing window).
 - For `days:N`, computes the bucket as the interval `[period_start + k*N, period_start + (k+1)*N)`.
-- Formats the output according to `file_format` (txt or md).
+- Formats the output according to `file_format` (`txt`, `md` or `md_rich`).
+- For `md_rich`: writes the heading + table header once, when the file is created,
+  appends one table row per entry (pipes and newlines escaped), and regenerates
+  the `README.md` index of every touched period folder.
 - Only appends entries whose hash (normalized url + category) is not already in `state/processed_ids.json`.
 
 ### 8.8 `main.py`
