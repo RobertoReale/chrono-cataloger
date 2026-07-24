@@ -136,7 +136,9 @@ Default categories (customizable in the config, not in the code):
 └──────────────────────────┘
 ```
 
-Cheap triage already cuts the volume by 90-95% before the expensive stage, so the classification batches always stay small: no real Map-Reduce with merging of parallel results is needed, just sequential batch processing.
+The two stages before the expensive one cut enough volume that the classification batches always stay small: no real Map-Reduce with merging of parallel results is needed, just sequential batch processing.
+
+Measured on a real week (4761 raw entries, an aggressive domain blacklist): cleaning left 1310 and triage kept 846 of those, ~82% end to end. Note where that reduction comes from — three quarters of it is the free local stage, and triage rejects a third to a half of what reaches it, not the 90-95% an earlier draft of this document assumed. That assumption was wrong in a way worth recording: triage is not a volume filter that happens to be a model, it is a *judgement* stage, and on a history already stripped of search results, mail and shopping, most of what is left genuinely is study material. Sizing the design around a hoped-for rejection rate would mean tuning the criteria to throw away pages the tool exists to catalogue. The lever for volume is the blacklist — free, visible in the GUI, reversible — and triage is what decides quality on top of it.
 
 ## 4. Extraction period vs. output granularity
 

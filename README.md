@@ -38,8 +38,19 @@ Chrome History (SQLite)
    └─ 5. writer     → writes/updates the .txt files per category, idempotently
 ```
 
-Triage cuts the volume by 90-95% **before** the expensive stage, so the
-classification batches always stay small. On long histories (a year, tens of
+Both stages before the expensive one cut volume, and the free local one does
+most of the work. Measured on a real week — 4761 raw entries, an aggressive
+domain blacklist — cleaning left 1310 and triage kept 846 of those: **~82% end
+to end**, of which the blacklists account for three quarters.
+
+Expect the split, not the total, to move with your config: a fresh blacklist
+leaves more for triage to reject, an aggressive one hands it material that is
+already mostly worth keeping. Budget from the number that actually costs money —
+the entries left after triage, ~50 per classification batch. If it comes out
+higher than you want to pay for, the lever is the blacklist (free, visible,
+reversible) before the triage criteria.
+
+On long histories (a year, tens of
 thousands of entries) processing always proceeds in **internal time windows**
 with **checkpoints**: an interrupted run resumes where it stopped, without
 reprocessing — or paying again for — the windows already done.

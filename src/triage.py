@@ -1,8 +1,12 @@
 """Cheap triage: pre-filtering with a lightweight model (e.g. Haiku).
 
 Takes the cleaned entries, sends them to the cheap model in large batches using
-ONLY domain + title, and keeps just the ones marked "relevant". This typically
-cuts the volume by 90-95% before the expensive classification stage.
+ONLY domain + title, and keeps just the ones marked "relevant".
+
+How much it cuts depends on what the blacklists already removed: measured on a
+real week (4761 raw entries, an aggressive domain blacklist), cleaning left 1310
+and triage kept 846 of those — a third to a half of what reaches it, ~82%
+end to end. The bulk of the reduction is the free local stage, not this one.
 
 Separation of concerns:
 - the USER defines the *criteria* (``triage.prompt`` in the config);
@@ -107,10 +111,23 @@ def triage(
                     "of them, so they go to the expensive stage unfiltered"
                 )
         else:
+            omitted = 0
             for idx, e in enumerate(batch, start=1):
                 # default True if the model omitted the entry (precaution)
+                if idx not in verdicts:
+                    omitted += 1
                 if verdicts.get(idx, True):
                     kept.append(e)
+            if omitted and on_warning:
+                # Keeping them is the right call, but silently: every one of
+                # these reaches the paid stage unfiltered, and the bill is the
+                # only place it would otherwise show up.
+                on_warning(
+                    f"triage: no verdict for {omitted} of {len(batch)} entries "
+                    f"({start + 1}-{start + len(batch)}); kept them, so they go "
+                    "to the expensive stage unfiltered (a smaller "
+                    "triage.batch_size gets the model to answer in full)"
+                )
 
         if on_progress:
             on_progress(min(start + batch_size, len(entries)), len(entries), len(kept))

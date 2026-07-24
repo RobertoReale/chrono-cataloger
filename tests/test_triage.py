@@ -76,3 +76,30 @@ def test_triage_warns_when_it_keeps_an_unreadable_batch():
     )
     assert len(out) == 1  # kept, as before
     assert warnings and "unreadable" in warnings[0]
+
+
+def test_triage_warns_about_entries_the_model_skipped():
+    """A partial answer keeps the missing entries — that must not be silent.
+
+    Each one reaches the paid stage unfiltered, so the only other place it would
+    show up is the bill.
+    """
+    entries = [_entry(f"https://{c}", c.upper()) for c in "abc"]
+    client = FakeLLMClient(lambda *a: '[{"i":1,"v":"noise"},{"i":2,"v":"relevant"}]')
+    warnings = []
+    out = triage(
+        entries, client, {"enabled": True, "batch_size": 10, "prompt": "p"}, "m",
+        on_warning=warnings.append,
+    )
+    # entry 3 has no verdict: kept, as the precaution intends
+    assert [e.url for e in out] == ["https://b", "https://c"]
+    assert warnings and "no verdict for 1 of 3" in warnings[0]
+
+
+def test_triage_says_nothing_when_the_model_answers_in_full():
+    entries = [_entry("https://a", "A"), _entry("https://b", "B")]
+    client = FakeLLMClient(lambda *a: '[{"i":1,"v":"relevant"},{"i":2,"v":"noise"}]')
+    warnings = []
+    triage(entries, client, {"enabled": True, "batch_size": 10, "prompt": "p"}, "m",
+           on_warning=warnings.append)
+    assert warnings == []
