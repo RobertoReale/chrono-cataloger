@@ -1,0 +1,91 @@
+# =====================================================================
+# chrono-catalogatore — configurazione di riferimento
+# Copia questo file in config.yaml e adattalo alle tue esigenze.
+# =====================================================================
+
+# --- Provider LLM ---
+llm:
+  provider: anthropic              # anthropic | openai | ollama
+  model: claude-sonnet-5           # classificazione fine
+  triage_model: claude-haiku-4-5   # pre-filtro economico
+  api_key_env: ANTHROPIC_API_KEY   # nome della variabile d'ambiente con la chiave
+  # base_url: http://localhost:11434   # per ollama (default gia' corretto)
+  max_retries: 3
+  timeout_seconds: 120
+
+# --- Sorgente cronologia ---
+source:
+  browser: chrome
+  # Lascia null per auto-rilevamento in base al sistema operativo.
+  history_path: null
+  # Esempi espliciti:
+  # macOS:   "~/Library/Application Support/Google/Chrome/Default/History"
+  # Windows: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History"
+  # Linux:   "~/.config/google-chrome/Default/History"
+
+# --- Periodo ed elaborazione a finestre ---
+processing:
+  window_size_days: 30             # dimensione della finestra interna di lavoro
+  max_batches_per_run: null        # es. 5 per un test limitato, null = nessun limite
+
+# --- Filtro / pulizia (gratis, locale) ---
+filtering:
+  min_visit_duration_seconds: 0    # 0 = disattivato (Chrome non espone durata affidabile)
+  min_visit_count: 1
+  domain_blacklist:
+    - mail.google.com
+    - web.whatsapp.com
+    - facebook.com
+    - instagram.com
+    - accounts.google.com
+    - localhost
+  url_keyword_blacklist:
+    - login
+    - checkout
+    - dashboard
+  strip_query_params: true
+  dedupe_by: url_normalizzato
+
+# --- Triage economico ---
+triage:
+  enabled: true
+  batch_size: 200
+  prompt: |
+    Ricevi una lista di voci di cronologia browser (dominio + titolo pagina).
+    Per ciascuna, rispondi solo "rilevante" o "rumore": rilevante se la pagina
+    indica un contenuto di apprendimento/approfondimento personale (articoli,
+    libri, concetti, video educativi, notizie approfondite, film); rumore se
+    e' contenuto operativo/ripetitivo (mail, social feed, ricerche generiche,
+    shopping, banking, strumenti di lavoro quotidiani).
+
+# --- Categorie e prompt di classificazione finale ---
+classification:
+  batch_size: 50
+  categories:
+    - name: "Filosofia e Storia"
+      description: "Idee filosofiche, correnti di pensiero, eventi ed episodi storici approfonditi"
+    - name: "Concetti e parole nuove"
+      description: "Termini tecnici, concetti scientifici o culturali nuovi incontrati e approfonditi"
+    - name: "Libri"
+      description: "Libri scoperti, recensiti, o di cui si e' cercato approfondimento"
+    - name: "Fatti storici o attuali interessanti"
+      description: "Notizie o fatti specifici, storici o di attualita', approfonditi"
+    - name: "Film"
+      description: "Film visti o cercati con l'intento di guardarli"
+  prompt: |
+    Analizza le seguenti voci di cronologia browser (url, titolo, numero di visite).
+    Per ciascuna voce potenzialmente rilevante, assegna una delle categorie:
+    {categories_list}
+    Scrivi una riga sintetica, in stile diario personale (max 20 parole), di cosa
+    e' stato imparato/scoperto — NON limitarti a copiare il titolo grezzo della pagina.
+    Includi l'URL tra parentesi solo se utile per ritrovare la fonte (es. video, pagina specifica).
+    Ignora le voci che non si adattano chiaramente a nessuna categoria.
+    Rispondi SOLO in JSON in questo formato:
+    [{{"categoria": "...", "sintesi": "...", "url": "..."}}]
+
+# --- Output ---
+output:
+  base_dir: "./Archivio_Studio"
+  group_by: month                  # month | week | days:N | all (sovrascrivibile da CLI)
+  file_format: txt                 # txt | md
+  filename_from: category

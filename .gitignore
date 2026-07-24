@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Stato/output runtime (contengono dati personali di cronologia)
+state/
+logs/
+Archivio_Studio/
+*.sqlite
+*.sqlite-*
+History
+History-*
+
+# Segreti / config utente (config.example.yaml e' la sola versionata)
+.env
+*.key
+config.yaml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
