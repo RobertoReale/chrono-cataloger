@@ -151,6 +151,7 @@ def run(args, on_progress=None) -> dict:
         file_format=cfg["output"]["file_format"],
         period_start=start,
         processed_ids_path=PROCESSED_IDS_PATH,
+        category_order=[c["name"] for c in cfg["classification"]["categories"]],
     )
 
     stats = {

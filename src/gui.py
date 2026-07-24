@@ -425,12 +425,14 @@ def _tab_run(cfg: dict) -> None:
     if st.session_state.group_by_kind == "days:N":
         o3.number_input("N days", min_value=1, step=1, key="group_by_n")
     o3.selectbox(
-        "File format", ["txt", "md", "md_rich"], key="file_format",
+        "File format", ["txt", "md", "md_rich", "md_journal"], key="file_format",
         help="**txt** — one plain line per entry.\n\n"
              "**md** — a bullet list.\n\n"
              "**md_rich** — organized markdown: a heading per category, a table "
              "(date / what I learned / source) and a `README.md` index in every "
-             "period folder.",
+             "period folder.\n\n"
+             "**md_journal** — a single file per period (`2026-07.md`) with one "
+             "`## Category` section and table each, like a handwritten diary.",
     )
 
     st.divider()
@@ -664,13 +666,16 @@ def _tab_output(cfg: dict) -> None:
         st.info("Nothing produced yet: the output folder does not exist.")
         return
 
-    periods = sorted((p for p in base.iterdir() if p.is_dir()), reverse=True)
+    # A period is a sub-folder (txt/md/md_rich) or, with md_journal, a single file.
+    periods = sorted(
+        (p for p in base.iterdir() if p.is_dir() or p.suffix == ".md"), reverse=True
+    )
     if not periods:
         st.info("The output folder is empty.")
         return
 
-    period = st.selectbox("Period", periods, format_func=lambda p: p.name)
-    files = sorted(f for f in period.iterdir() if f.is_file())
+    period = st.selectbox("Period", periods, format_func=lambda p: p.stem)
+    files = sorted(f for f in period.iterdir() if f.is_file()) if period.is_dir() else [period]
     if not files:
         st.info("This period contains no file.")
         return
@@ -687,7 +692,7 @@ def _tab_output(cfg: dict) -> None:
             st.warning(f"{f.name}: {exc}")
             continue
         count = len([line for line in text.splitlines() if line.strip()])
-        with st.expander(f"{f.name} — {count} line(s)"):
+        with st.expander(f"{f.name} — {count} line(s)", expanded=len(files) == 1):
             if rendered and f.suffix == ".md" and text:
                 st.markdown(text)
             else:

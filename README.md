@@ -164,11 +164,16 @@ commented file. In short:
 - `triage.prompt`: the relevant/noise **criteria** (the output format is enforced by the code).
 - `classification.categories` + `classification.prompt`: the categories and the summarization
   prompt, with the `{categories_list}` placeholder.
-- `output`: base folder, `group_by`, file format (`txt`/`md`/`md_rich`).
-  `md_rich` produces organized markdown instead of bare lines: every category
-  file opens with a `# Category` heading and a `Date | What I learned | Source`
-  table, and each period folder gets a `README.md` index listing the categories
-  with their entry counts.
+- `output`: base folder, `group_by`, file format
+  (`txt`/`md`/`md_rich`/`md_journal`). The two markdown-heavy formats:
+  - `md_rich` — one file per category, opening with a `# Category` heading and a
+    `Date | What I learned | Source` table; each period folder gets a `README.md`
+    index listing the categories with their entry counts.
+  - `md_journal` — a **single file per period** (`2026-07.md`), with one
+    `## Category` section and table each, plus a table of contents. Closest to a
+    handwritten monthly diary. Sections follow the order of
+    `classification.categories`, and anything already in the file — including
+    lines you wrote yourself — is preserved.
 
 ### Path to the Chrome History file
 

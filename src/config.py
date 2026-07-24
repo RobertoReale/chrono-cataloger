@@ -103,8 +103,10 @@ def _validate(cfg: dict) -> None:
             "(expected: month | week | days:N | all)"
         )
 
-    if cfg["output"]["file_format"] not in ("txt", "md", "md_rich"):
-        raise ValueError("output.file_format must be 'txt', 'md' or 'md_rich'")
+    if cfg["output"]["file_format"] not in ("txt", "md", "md_rich", "md_journal"):
+        raise ValueError(
+            "output.file_format must be 'txt', 'md', 'md_rich' or 'md_journal'"
+        )
 
     browser = cfg["source"]["browser"]
     if browser != "chrome":

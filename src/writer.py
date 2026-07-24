@@ -40,6 +40,44 @@ def _link_label(url: str) -> str:
     return m.group(1) if m else url
 
 
+_TABLE_HEADER: str = "| Date | What I learned | Source |\n| --- | --- | --- |"
+
+# The table of contents of a journal file lives between these markers, so it can
+# be regenerated without touching anything the user wrote around it.
+_TOC_OPEN = "<!-- toc -->"
+_TOC_CLOSE = "<!-- /toc -->"
+
+
+def _split_sections(text: str) -> tuple[str, dict[str, list[str]]]:
+    """Split a journal file into its preamble and its ``## Category`` sections.
+
+    The section bodies are returned verbatim so that re-writing the file never
+    reformats (or loses) what is already there.
+    """
+    preamble: list[str] = []
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip()
+            sections.setdefault(current, [])
+        elif current is None:
+            preamble.append(line)
+        else:
+            sections[current].append(line)
+    return "\n".join(preamble).strip("\n"), sections
+
+
+def _render_toc(preamble: str, categories: list[str]) -> str:
+    """Refresh the TOC between the markers; leave the preamble alone if absent."""
+    if _TOC_OPEN not in preamble or _TOC_CLOSE not in preamble:
+        return preamble
+    links = "\n".join(f"- [{c}](#{slugify(c)})" for c in categories)
+    head, rest = preamble.split(_TOC_OPEN, 1)
+    _, tail = rest.split(_TOC_CLOSE, 1)
+    return f"{head}{_TOC_OPEN}\n{links}\n{_TOC_CLOSE}{tail}"
+
+
 def _is_data_row(line: str) -> bool:
     """True for a table row written by ``_format_table_row`` (not header/separator)."""
     return bool(re.match(r"^\| (?:\d{4}-\d{2}-\d{2}|—) \|", line))
@@ -91,10 +129,14 @@ class Writer:
         file_format: str,
         period_start: datetime,
         processed_ids_path: str | Path,
+        category_order: list[str] | None = None,
     ):
         self.base_dir = Path(base_dir)
         self.group_by = group_by
         self.file_format = file_format
+        # Order the sections of a md_journal file follow; anything not listed
+        # here (a category renamed in the config, say) is kept after them.
+        self.category_order = list(category_order or [])
         self.period_start = period_start.astimezone(timezone.utc)
         self.processed_ids_path = Path(processed_ids_path)
         self.processed = load_processed_ids(processed_ids_path)
@@ -124,7 +166,7 @@ class Writer:
     def format_line(self, entry: ClassifiedEntry, visit: datetime | None = None) -> str:
         summary = entry.summary.strip()
         url = (entry.url or "").strip()
-        if self.file_format == "md_rich":
+        if self.file_format in ("md_rich", "md_journal"):
             return self._format_table_row(entry, visit)
         if url:
             text = f"{summary} ({url})"
@@ -146,8 +188,7 @@ class Writer:
         return (
             f"# {category}\n\n"
             f"*Period: {bucket}* · *Source: Chrome history*\n\n"
-            "| Date | What I learned | Source |\n"
-            "| --- | --- | --- |\n"
+            f"{_TABLE_HEADER}\n"
         )
 
     # --- Index ------------------------------------------------------------ #
@@ -181,6 +222,57 @@ class Writer:
         )
         (folder / "README.md").write_text(content, encoding="utf-8")
 
+    # --- Journal (one file per period, one section per category) ----------- #
+    def _journal_preamble(self, bucket: str) -> str:
+        return (
+            f"# {bucket}\n\n"
+            "*Source: Chrome history*\n\n"
+            f"{_TOC_OPEN}\n{_TOC_CLOSE}"
+        )
+
+    def _section_order(self, names: list[str]) -> list[str]:
+        """Configured categories first, in config order; the rest keeps its own."""
+        known = [c for c in self.category_order if c in names]
+        rest = [n for n in names if n not in known]
+        return known + rest
+
+    def _write_journal(self, bucket: str, new_rows: dict[str, list[str]]) -> None:
+        """Merge the new rows into ``<bucket>.md``, one ``##`` section per category.
+
+        Unlike the other formats this rewrites the file instead of appending, so
+        rows can land inside the right section. Everything already on disk is
+        preserved verbatim: only the TOC is regenerated.
+        """
+        path = self.base_dir / f"{bucket}.md"
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        preamble, sections = _split_sections(text)
+        if not preamble:
+            preamble = self._journal_preamble(bucket)
+
+        for category, rows in new_rows.items():
+            if category not in sections:
+                sections[category] = _TABLE_HEADER.split("\n")
+            table = sections[category]
+            # Drop the blank lines the previous write left at the end, so the new
+            # rows stay attached to the table.
+            while table and not table[-1].strip():
+                table.pop()
+            table.extend(rows)
+
+        order = self._section_order(list(sections))
+        preamble = _render_toc(preamble, order)
+
+        parts = [preamble]
+        for category in order:
+            body = "\n".join(sections[category]).strip("\n")
+            parts.append(f"## {category}\n\n{body}")
+        content = "\n\n".join(parts) + "\n"
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".md.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(path)
+
     # --- Writing ---------------------------------------------------------- #
     def write(self, entries: list[ClassifiedEntry]) -> int:
         """Write the new entries; returns how many were actually added.
@@ -213,6 +305,20 @@ class Writer:
 
             self.processed.add(h)
             newly_processed.append(h)
+
+        # md_journal keeps every category of a period in a single file, so it
+        # merges sections instead of appending to one file per category.
+        if self.file_format == "md_journal":
+            written = 0
+            per_bucket: dict[str, dict[str, list[str]]] = {}
+            for (bucket, cat_slug), lines in buckets.items():
+                per_bucket.setdefault(bucket, {})[cat_names[cat_slug]] = lines
+                written += len(lines)
+            for bucket, by_category in per_bucket.items():
+                self._write_journal(bucket, by_category)
+            if newly_processed:
+                save_processed_ids(self.processed_ids_path, self.processed)
+            return written
 
         # Actual append to disk.
         ext = "txt" if self.file_format == "txt" else "md"

@@ -64,6 +64,35 @@ Study_Archive/2026-07/
 | 2026-07-10 | Spinoza equates God with Nature | [plato.stanford.edu](https://plato.stanford.edu/entries/spinoza/) |
 ```
 
+With `file_format: md_journal` there is instead a **single file per period**,
+holding every category as a section — the shape of a handwritten monthly diary:
+
+```
+Study_Archive/
+├── 2026-07.md
+└── 2026-08.md
+```
+
+```markdown
+# 2026-07
+
+*Source: Chrome history*
+
+<!-- toc -->
+- [Philosophy and History](#philosophy-and-history)
+- [Books](#books)
+<!-- /toc -->
+
+## Philosophy and History
+
+| Date | What I learned | Source |
+| --- | --- | --- |
+| 2026-07-10 | Spinoza equates God with Nature | [plato.stanford.edu](https://plato.stanford.edu/entries/spinoza/) |
+```
+
+Sections follow the order of `classification.categories`; categories found in the
+file but no longer in the config keep their place after them.
+
 Default categories (customizable in the config, not in the code):
 - Philosophy and History
 - Concepts / New ideas and words
@@ -264,7 +293,7 @@ classification:
 output:
   base_dir: "./Study_Archive"
   group_by: month                  # month | week | days:N | all (overridable from the CLI)
-  file_format: txt                 # txt | md | md_rich
+  file_format: txt                 # txt | md | md_rich | md_journal
 ```
 
 Output files are named after the category slug: one file per category per period.
@@ -339,10 +368,16 @@ def get_client(provider: str) -> LLMClient:
 ### 8.7 `writer.py`
 - Takes `--group-by` to decide which sub-folder/file each classified entry goes into, based on the entry's original `last_visit_time` (not on the processing window).
 - For `days:N`, computes the bucket as the interval `[period_start + k*N, period_start + (k+1)*N)`.
-- Formats the output according to `file_format` (`txt`, `md` or `md_rich`).
+- Formats the output according to `file_format` (`txt`, `md`, `md_rich` or `md_journal`).
 - For `md_rich`: writes the heading + table header once, when the file is created,
   appends one table row per entry (pipes and newlines escaped), and regenerates
   the `README.md` index of every touched period folder.
+- For `md_journal`: parses `<period>.md` into preamble + `##` sections, merges the
+  new rows into the table of their category (creating the section if missing),
+  reorders the sections after `classification.categories` and rewrites the file.
+  Section bodies and preamble are kept verbatim — only the TOC, delimited by
+  `<!-- toc -->` markers, is regenerated — so hand-written notes survive a run.
+  The rewrite goes through a temporary file, then an atomic replace.
 - Only appends entries whose hash (normalized url + category) is not already in `state/processed_ids.json`.
 
 ### 8.8 `main.py`

@@ -123,6 +123,73 @@ def test_md_rich_escapes_pipes_and_newlines(tmp_path):
     assert "a \\| b c" in row[0]
 
 
+def _journal_writer(tmp_path, category_order=None):
+    return Writer(
+        base_dir=tmp_path / "out", group_by="month", file_format="md_journal",
+        period_start=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        processed_ids_path=tmp_path / "state" / "p.json",
+        category_order=category_order,
+    )
+
+
+def _journal(tmp_path):
+    return (tmp_path / "out" / "2026-07.md").read_text(encoding="utf-8")
+
+
+def test_md_journal_single_file_with_sections(tmp_path):
+    w = _journal_writer(tmp_path)
+    assert w.write([_ce("Books", "A"), _ce("Videos", "B")]) == 2
+    content = _journal(tmp_path)
+    assert content.startswith("# 2026-07\n")
+    assert "## Books" in content and "## Videos" in content
+    assert content.count("| Date | What I learned | Source |") == 2
+    assert "- [Books](#books)" in content
+    # no per-category files, and no period sub-folder
+    assert not (tmp_path / "out" / "2026-07").exists()
+
+
+def test_md_journal_appends_into_existing_section(tmp_path):
+    _journal_writer(tmp_path).write([_ce("Books", "A", url="https://x/a")])
+    _journal_writer(tmp_path).write([_ce("Books", "B", url="https://x/b")])
+    content = _journal(tmp_path)
+    assert content.count("## Books") == 1
+    assert content.count("| Date | What I learned | Source |") == 1
+    rows = [l for l in content.splitlines() if l.startswith("| 2026")]
+    assert len(rows) == 2
+    assert "A" in rows[0] and "B" in rows[1]
+
+
+def test_md_journal_follows_configured_category_order(tmp_path):
+    w = _journal_writer(tmp_path, category_order=["Videos", "Books"])
+    w.write([_ce("Books", "A"), _ce("Videos", "B")])
+    content = _journal(tmp_path)
+    assert content.index("## Videos") < content.index("## Books")
+    assert content.index("- [Videos]") < content.index("- [Books]")
+
+
+def test_md_journal_preserves_handwritten_content(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "2026-07.md").write_text(
+        "# Luglio 2026\n\nmia nota personale\n\n"
+        "## Books\n\nriga scritta a mano\n",
+        encoding="utf-8",
+    )
+    _journal_writer(tmp_path).write([_ce("Books", "A")])
+    content = _journal(tmp_path)
+    assert "mia nota personale" in content
+    assert "riga scritta a mano" in content
+    assert content.startswith("# Luglio 2026")
+    assert "| 2026-07-10 | A |" in content
+
+
+def test_md_journal_one_file_per_period(tmp_path):
+    w = _journal_writer(tmp_path)
+    w.write([_ce("Books", "A", m=7), _ce("Books", "B", m=8, d=2)])
+    names = sorted(p.name for p in (tmp_path / "out").iterdir())
+    assert names == ["2026-07.md", "2026-08.md"]
+
+
 def test_md_rich_builds_index(tmp_path):
     w = _rich_writer(tmp_path)
     w.write([_ce("Books", "A"), _ce("Books", "B"), _ce("Videos", "C")])
