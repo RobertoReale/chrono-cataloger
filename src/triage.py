@@ -1,13 +1,13 @@
-"""Triage economico: pre-filtro con modello leggero (es. Haiku).
+"""Cheap triage: pre-filtering with a lightweight model (e.g. Haiku).
 
-Riceve le voci pulite, le manda a batch grandi al modello economico usando SOLO
-dominio + titolo, e tiene solo quelle marcate "rilevante". Riduce tipicamente il
-volume del 90-95% prima dello stadio costoso di classificazione.
+Takes the cleaned entries, sends them to the cheap model in large batches using
+ONLY domain + title, and keeps just the ones marked "relevant". This typically
+cuts the volume by 90-95% before the expensive classification stage.
 
-Separazione delle responsabilita':
-- l'UTENTE definisce i *criteri* (``triage.prompt`` in config);
-- il CODICE impone il *formato di output* parseabile, così il tuning dei criteri
-  non rompe mai il parsing.
+Separation of concerns:
+- the USER defines the *criteria* (``triage.prompt`` in the config);
+- the CODE enforces the parseable *output format*, so tuning the criteria never
+  breaks parsing.
 """
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ from urllib.parse import urlsplit
 from .llm_client import LLMClient
 from .models import HistoryEntry
 
-# Istruzioni di formato aggiunte automaticamente al prompt utente.
+# Format instructions appended automatically to the user prompt.
 _FORMAT_INSTRUCTIONS = """
 
-Ti viene fornita una lista NUMERATA di voci (una per riga, formato: "N. dominio — titolo").
-Rispondi ESCLUSIVAMENTE con un array JSON, un oggetto per ogni voce, nell'ordine dato:
-[{{"i": 1, "v": "rilevante"}}, {{"i": 2, "v": "rumore"}}, ...]
-dove "i" e' il numero della voce e "v" e' "rilevante" oppure "rumore".
-Non aggiungere testo prima o dopo l'array JSON. Non usare markdown."""
+You are given a NUMBERED list of entries (one per line, format: "N. domain — title").
+Reply EXCLUSIVELY with a JSON array, one object per entry, in the given order:
+[{{"i": 1, "v": "relevant"}}, {{"i": 2, "v": "noise"}}, ...]
+where "i" is the entry number and "v" is either "relevant" or "noise".
+Do not add any text before or after the JSON array. Do not use markdown."""
 
 
 def _domain(url: str) -> str:
@@ -36,20 +36,20 @@ def _domain(url: str) -> str:
 def _build_batch_prompt(base_prompt: str, batch: list[HistoryEntry]) -> str:
     lines = []
     for idx, e in enumerate(batch, start=1):
-        title = (e.title or "").replace("\n", " ").strip() or "(senza titolo)"
+        title = (e.title or "").replace("\n", " ").strip() or "(untitled)"
         lines.append(f"{idx}. {_domain(e.normalized_url or e.url)} — {title}")
     listing = "\n".join(lines)
-    return f"{base_prompt.rstrip()}\n{_FORMAT_INSTRUCTIONS}\n\nVoci:\n{listing}"
+    return f"{base_prompt.rstrip()}\n{_FORMAT_INSTRUCTIONS}\n\nEntries:\n{listing}"
 
 
 _JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
 
 
 def _parse_verdicts(raw: str, batch_size: int) -> dict[int, bool]:
-    """Estrae {indice(1-based) -> is_rilevante} dalla risposta del modello.
+    """Extract {index(1-based) -> is_relevant} from the model response.
 
-    Robusto a testo extra intorno al JSON. Se il parsing fallisce del tutto,
-    ritorna un dizionario vuoto (il chiamante decide il fallback).
+    Tolerant of extra text around the JSON. If parsing fails entirely, returns an
+    empty dictionary (the caller decides the fallback).
     """
     match = _JSON_ARRAY_RE.search(raw or "")
     if not match:
@@ -69,7 +69,7 @@ def _parse_verdicts(raw: str, batch_size: int) -> dict[int, bool]:
             continue
         v = str(item.get("v", "")).strip().lower()
         if 1 <= i <= batch_size:
-            verdicts[i] = v.startswith("rilev")  # "rilevante"
+            verdicts[i] = v.startswith("relev")  # "relevant"
     return verdicts
 
 
@@ -80,12 +80,12 @@ def triage(
     triage_model: str,
     on_progress=None,
 ) -> list[HistoryEntry]:
-    """Filtra le voci tenendo solo quelle marcate rilevanti dal modello.
+    """Filter the entries, keeping only the ones the model marked as relevant.
 
-    Se ``triage.enabled`` e' False, ritorna tutte le voci invariate.
-    In caso di batch non parseabile, per prudenza le voci di quel batch sono
-    TENUTE (falso positivo meglio di scartare qualcosa di rilevante): saranno
-    comunque filtrate meglio dalla classificazione fine.
+    If ``triage.enabled`` is False, returns every entry unchanged.
+    When a batch cannot be parsed, its entries are KEPT as a precaution (a false
+    positive is better than dropping something relevant): fine-grained
+    classification will filter them out more accurately anyway.
     """
     if not triage_cfg.get("enabled", True):
         return list(entries)
@@ -99,16 +99,16 @@ def triage(
     for start in range(0, len(entries), batch_size):
         batch = entries[start:start + batch_size]
         prompt = _build_batch_prompt(base_prompt, batch)
-        # max_tokens generoso: ~30 token/voce per l'array JSON compatto.
+        # Generous max_tokens: ~30 tokens/entry for the compact JSON array.
         raw = client.complete(prompt, triage_model, max_tokens=min(8000, 40 * len(batch) + 200))
         verdicts = _parse_verdicts(raw, len(batch))
 
         if not verdicts:
-            # Batch non parseabile: conserva tutto per prudenza.
+            # Unparseable batch: keep everything, just in case.
             kept.extend(batch)
         else:
             for idx, e in enumerate(batch, start=1):
-                # default True se il modello ha omesso la voce (prudenza)
+                # default True if the model omitted the entry (precaution)
                 if verdicts.get(idx, True):
                     kept.append(e)
 

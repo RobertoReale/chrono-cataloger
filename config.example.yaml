@@ -1,36 +1,36 @@
 # =====================================================================
-# chrono-catalogatore — configurazione di riferimento
-# Copia questo file in config.yaml e adattalo alle tue esigenze.
+# chrono-cataloger — reference configuration
+# Copy this file to config.yaml and adapt it to your needs.
 # =====================================================================
 
-# --- Provider LLM ---
+# --- LLM provider ---
 llm:
   provider: anthropic              # anthropic | openai | ollama
-  model: claude-sonnet-5           # classificazione fine
-  triage_model: claude-haiku-4-5   # pre-filtro economico
-  api_key_env: ANTHROPIC_API_KEY   # nome della variabile d'ambiente con la chiave
-  # base_url: http://localhost:11434   # per ollama (default gia' corretto)
+  model: claude-sonnet-5           # fine-grained classification
+  triage_model: claude-haiku-4-5   # cheap pre-filter
+  api_key_env: ANTHROPIC_API_KEY   # name of the environment variable holding the key
+  # base_url: http://localhost:11434   # for ollama (the default is already correct)
   max_retries: 3
   timeout_seconds: 120
 
-# --- Sorgente cronologia ---
+# --- History source ---
 source:
   browser: chrome
-  # Lascia null per auto-rilevamento in base al sistema operativo.
+  # Leave null for auto-detection based on the operating system.
   history_path: null
-  # Esempi espliciti:
+  # Explicit examples:
   # macOS:   "~/Library/Application Support/Google/Chrome/Default/History"
   # Windows: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History"
   # Linux:   "~/.config/google-chrome/Default/History"
 
-# --- Periodo ed elaborazione a finestre ---
+# --- Period and windowed processing ---
 processing:
-  window_size_days: 30             # dimensione della finestra interna di lavoro
-  max_batches_per_run: null        # es. 5 per un test limitato, null = nessun limite
+  window_size_days: 30             # size of the internal working window
+  max_batches_per_run: null        # e.g. 5 for a limited test, null = no limit
 
-# --- Filtro / pulizia (gratis, locale) ---
+# --- Filtering / cleaning (free, local) ---
 filtering:
-  min_visit_duration_seconds: 0    # 0 = disattivato (Chrome non espone durata affidabile)
+  min_visit_duration_seconds: 0    # 0 = disabled (Chrome exposes no reliable duration)
   min_visit_count: 1
   domain_blacklist:
     - mail.google.com
@@ -44,48 +44,49 @@ filtering:
     - checkout
     - dashboard
   strip_query_params: true
-  dedupe_by: url_normalizzato
+  dedupe_by: normalized_url
 
-# --- Triage economico ---
+# --- Cheap triage ---
 triage:
   enabled: true
   batch_size: 200
   prompt: |
-    Ricevi una lista di voci di cronologia browser (dominio + titolo pagina).
-    Per ciascuna, rispondi solo "rilevante" o "rumore": rilevante se la pagina
-    indica un contenuto di apprendimento/approfondimento personale (articoli,
-    libri, concetti, video educativi, notizie approfondite, film); rumore se
-    e' contenuto operativo/ripetitivo (mail, social feed, ricerche generiche,
-    shopping, banking, strumenti di lavoro quotidiani).
+    You are given a list of browser history entries (domain + page title).
+    For each one, answer only "relevant" or "noise": relevant if the page points
+    to personal learning or in-depth content (articles, books, concepts,
+    educational videos, long-form news, films); noise if it is operational or
+    repetitive content (email, social feeds, generic searches, shopping,
+    banking, everyday work tools).
 
-# --- Categorie e prompt di classificazione finale ---
+# --- Categories and final classification prompt ---
 classification:
   batch_size: 50
   categories:
-    - name: "Filosofia e Storia"
-      description: "Idee filosofiche, correnti di pensiero, eventi ed episodi storici approfonditi"
-    - name: "Concetti e parole nuove"
-      description: "Termini tecnici, concetti scientifici o culturali nuovi incontrati e approfonditi"
-    - name: "Libri"
-      description: "Libri scoperti, recensiti, o di cui si e' cercato approfondimento"
-    - name: "Fatti storici o attuali interessanti"
-      description: "Notizie o fatti specifici, storici o di attualita', approfonditi"
-    - name: "Film"
-      description: "Film visti o cercati con l'intento di guardarli"
+    - name: "Philosophy and History"
+      description: "Philosophical ideas, schools of thought, historical events and episodes explored in depth"
+    - name: "New concepts and words"
+      description: "Technical terms, new scientific or cultural concepts encountered and explored"
+    - name: "Books"
+      description: "Books discovered, reviewed, or looked into further"
+    - name: "Interesting historical or current facts"
+      description: "Specific news or facts, historical or current, explored in depth"
+    - name: "Films"
+      description: "Films watched, or searched for with the intent of watching them"
   prompt: |
-    Analizza le seguenti voci di cronologia browser (url, titolo, numero di visite).
-    Per ciascuna voce potenzialmente rilevante, assegna una delle categorie:
+    Analyze the following browser history entries (url, title, visit count).
+    For each potentially relevant entry, assign one of these categories:
     {categories_list}
-    Scrivi una riga sintetica, in stile diario personale (max 20 parole), di cosa
-    e' stato imparato/scoperto — NON limitarti a copiare il titolo grezzo della pagina.
-    Includi l'URL tra parentesi solo se utile per ritrovare la fonte (es. video, pagina specifica).
-    Ignora le voci che non si adattano chiaramente a nessuna categoria.
-    Rispondi SOLO in JSON in questo formato:
-    [{{"categoria": "...", "sintesi": "...", "url": "..."}}]
+    Write a short line, in personal diary style (max 20 words), about what was
+    learned or discovered — do NOT just copy the raw page title.
+    Include the URL in parentheses only when useful to find the source again
+    (e.g. a video, a specific page).
+    Ignore entries that do not clearly fit any category.
+    Reply ONLY in JSON, in this format:
+    [{{"category": "...", "summary": "...", "url": "..."}}]
 
 # --- Output ---
 output:
-  base_dir: "./Archivio_Studio"
-  group_by: month                  # month | week | days:N | all (sovrascrivibile da CLI)
+  base_dir: "./Study_Archive"
+  group_by: month                  # month | week | days:N | all (overridable from the CLI)
   file_format: txt                 # txt | md
   filename_from: category

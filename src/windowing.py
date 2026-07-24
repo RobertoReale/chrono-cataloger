@@ -1,9 +1,9 @@
-"""Suddivisione del periodo richiesto in finestre interne di elaborazione.
+"""Splitting the requested period into internal processing windows.
 
-Le finestre sono indipendenti dalla granularita' di output (``--group-by``):
-servono solo a non processare mai un intero anno in un colpo solo. Ogni finestra
-completata viene registrata in ``state/checkpoint.json`` così un rilancio riparte
-da dove si era interrotto senza rielaborare.
+The windows are independent of the output granularity (``--group-by``): their
+only purpose is to never process a whole year in one go. Each completed window
+is recorded in ``state/checkpoint.json``, so a new run resumes where the
+previous one stopped instead of reprocessing everything.
 """
 from __future__ import annotations
 
@@ -15,14 +15,14 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Window:
-    """Finestra temporale [start, end) di elaborazione."""
+    """A [start, end) processing time window."""
 
     start: datetime
     end: datetime
 
     @property
     def key(self) -> str:
-        """Chiave stabile usata nel checkpoint (estremi in ISO date)."""
+        """Stable key used in the checkpoint (bounds as ISO dates)."""
         return f"{self.start.date().isoformat()}_{self.end.date().isoformat()}"
 
 
@@ -32,29 +32,29 @@ def resolve_period(
     last_days: int | None,
     now: datetime | None = None,
 ) -> tuple[datetime, datetime]:
-    """Determina [start, end] dal range esplicito o da ``last_days``.
+    """Determine [start, end] from the explicit range or from ``last_days``.
 
-    Gli estremi sono normalizzati a UTC; ``end`` copre l'intera giornata finale.
+    The bounds are normalized to UTC; ``end`` covers the whole final day.
     """
     now = now or datetime.now(timezone.utc)
 
     if last_days is not None:
         if last_days < 1:
-            raise ValueError("last_days deve essere >= 1")
+            raise ValueError("last_days must be >= 1")
         end = now
         start = now - timedelta(days=last_days)
         return _as_utc(start), _as_utc(end)
 
     if from_date is None or to_date is None:
-        raise ValueError("Specificare --from e --to, oppure --last-days.")
+        raise ValueError("Specify --from and --to, or --last-days.")
 
     start = _as_utc(from_date)
-    # end esteso a fine giornata per includere tutte le visite del giorno 'to'.
+    # end extended to the end of the day, to include every visit on the 'to' day.
     end = _as_utc(to_date)
     if end.hour == 0 and end.minute == 0 and end.second == 0:
         end = end + timedelta(days=1) - timedelta(microseconds=1)
     if end < start:
-        raise ValueError("La data 'to' precede la data 'from'.")
+        raise ValueError("The 'to' date precedes the 'from' date.")
     return start, end
 
 
@@ -67,9 +67,9 @@ def generate_windows(
     end: datetime,
     window_size_days: int,
 ) -> list[Window]:
-    """Divide [start, end] in finestre consecutive di ``window_size_days`` giorni."""
+    """Split [start, end] into consecutive windows of ``window_size_days`` days."""
     if window_size_days < 1:
-        raise ValueError("window_size_days deve essere >= 1")
+        raise ValueError("window_size_days must be >= 1")
     windows: list[Window] = []
     cursor = start
     step = timedelta(days=window_size_days)
@@ -84,7 +84,7 @@ def generate_windows(
 # Checkpoint
 # --------------------------------------------------------------------------- #
 def load_checkpoint(path: str | Path) -> set[str]:
-    """Restituisce l'insieme delle chiavi di finestra gia' completate."""
+    """Return the set of window keys that have already been completed."""
     p = Path(path)
     if not p.exists():
         return set()
@@ -96,7 +96,7 @@ def load_checkpoint(path: str | Path) -> set[str]:
 
 
 def save_checkpoint(path: str | Path, completed: set[str]) -> None:
-    """Salva l'insieme delle finestre completate (scrittura atomica)."""
+    """Save the set of completed windows (atomic write)."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = {"completed_windows": sorted(completed)}
@@ -106,5 +106,5 @@ def save_checkpoint(path: str | Path, completed: set[str]) -> None:
 
 
 def pending_windows(windows: list[Window], completed: set[str]) -> list[Window]:
-    """Filtra le finestre non ancora completate, preservando l'ordine."""
+    """Filter out the windows already completed, preserving the order."""
     return [w for w in windows if w.key not in completed]

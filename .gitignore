@@ -7,16 +7,17 @@ venv/
 .pytest_cache/
 .mypy_cache/
 
-# Stato/output runtime (contengono dati personali di cronologia)
+# Runtime state/output (they contain personal history data)
 state/
 logs/
+Study_Archive/
 Archivio_Studio/
 *.sqlite
 *.sqlite-*
 History
 History-*
 
-# Segreti / config utente (config.example.yaml e' la sola versionata)
+# Secrets / user config (config.example.yaml is the only versioned one)
 .env
 *.key
 config.yaml

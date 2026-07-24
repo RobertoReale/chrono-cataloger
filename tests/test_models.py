@@ -16,7 +16,7 @@ def test_webkit_roundtrip():
 
 
 def test_webkit_known_value():
-    # 2021-01-01 00:00 UTC ~ 13253932800000000 microsecondi WebKit
+    # 2021-01-01 00:00 UTC ~ 13253932800000000 WebKit microseconds
     dt = datetime(2021, 1, 1, tzinfo=timezone.utc)
     assert datetime_to_webkit_micros(dt) == 13253932800000000
 
@@ -29,6 +29,6 @@ def test_history_entry_roundtrip_dict():
 
 
 def test_classified_entry_strips_and_validates():
-    c = ClassifiedEntry(categoria="  Libri  ", sintesi="  Etica di Spinoza  ", url="")
-    assert c.categoria == "Libri"
-    assert c.sintesi == "Etica di Spinoza"
+    c = ClassifiedEntry(category="  Books  ", summary="  Spinoza's Ethics  ", url="")
+    assert c.category == "Books"
+    assert c.summary == "Spinoza's Ethics"

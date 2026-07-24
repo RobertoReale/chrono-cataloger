@@ -1,8 +1,8 @@
-"""Modelli dati condivisi lungo la pipeline.
+"""Data models shared across the pipeline.
 
-Uso di ``pydantic`` per l'output dell'LLM (validazione stretta) e di semplici
-``dataclass`` per i record che circolano internamente e non hanno bisogno di
-validazione a runtime.
+``pydantic`` is used for the LLM output (strict validation) and plain
+``dataclass`` objects for the records that only circulate internally and need no
+runtime validation.
 """
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, Field, field_validator
 
-# WebKit epoch: Chrome memorizza last_visit_time in microsecondi dal 1601-01-01 UTC.
+# WebKit epoch: Chrome stores last_visit_time in microseconds since 1601-01-01 UTC.
 _WEBKIT_EPOCH = datetime(1601, 1, 1, tzinfo=timezone.utc)
 _MICROS_PER_SECOND = 1_000_000
 
 
 def webkit_micros_to_datetime(micros: int) -> datetime:
-    """Converte un timestamp Chrome (microsecondi dal 1601-01-01) in datetime UTC."""
+    """Convert a Chrome timestamp (microseconds since 1601-01-01) to a UTC datetime."""
     return _WEBKIT_EPOCH + timedelta(microseconds=micros)
 
 
 def datetime_to_webkit_micros(dt: datetime) -> int:
-    """Converte un datetime in timestamp Chrome (microsecondi dal 1601-01-01)."""
+    """Convert a datetime to a Chrome timestamp (microseconds since 1601-01-01)."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     delta = dt - _WEBKIT_EPOCH
@@ -31,14 +31,14 @@ def datetime_to_webkit_micros(dt: datetime) -> int:
 
 @dataclass
 class HistoryEntry:
-    """Una voce grezza (o pulita) di cronologia."""
+    """A raw (or cleaned) history entry."""
 
     url: str
     title: str
     visit_count: int
-    last_visit_micros: int  # timestamp WebKit originale, mai perso lungo la pipeline
+    last_visit_micros: int  # original WebKit timestamp, never lost along the pipeline
 
-    # Popolato dal cleaner:
+    # Filled in by the cleaner:
     normalized_url: str = ""
 
     @property
@@ -66,17 +66,17 @@ class HistoryEntry:
 
 
 class ClassifiedEntry(BaseModel):
-    """Voce classificata restituita dall'LLM e validata."""
+    """A classified entry returned by the LLM, after validation."""
 
-    categoria: str = Field(..., min_length=1)
-    sintesi: str = Field(..., min_length=1)
+    category: str = Field(..., min_length=1)
+    summary: str = Field(..., min_length=1)
     url: str = ""
 
-    # Metadati aggiunti localmente dopo la classificazione (non provengono dall'LLM):
+    # Metadata added locally after classification (it does not come from the LLM):
     last_visit_micros: int | None = None
     normalized_url: str | None = None
 
-    @field_validator("categoria", "sintesi", mode="before")
+    @field_validator("category", "summary", mode="before")
     @classmethod
     def _strip(cls, v):
         if isinstance(v, str):

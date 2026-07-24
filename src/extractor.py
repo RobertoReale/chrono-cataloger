@@ -1,7 +1,7 @@
-"""Estrazione della cronologia da Chrome (database SQLite ``History``).
+"""History extraction from Chrome (the ``History`` SQLite database).
 
-Chrome mantiene un lock esclusivo sul file ``History`` mentre e' in esecuzione,
-quindi lo copiamo in una posizione temporanea prima di aprirlo in sola lettura.
+Chrome keeps an exclusive lock on the ``History`` file while it is running, so
+we copy it to a temporary location before opening it read-only.
 """
 from __future__ import annotations
 
@@ -24,9 +24,9 @@ ORDER BY last_visit_time ASC
 
 
 def default_history_path(browser: str = "chrome") -> Path:
-    """Percorso di default del file History in base al sistema operativo."""
+    """Default path of the History file, based on the operating system."""
     if browser != "chrome":
-        raise ValueError(f"Browser non supportato per l'auto-rilevamento: {browser}")
+        raise ValueError(f"Browser not supported for auto-detection: {browser}")
 
     if sys.platform.startswith("win"):
         local = os.environ.get("LOCALAPPDATA", "")
@@ -41,12 +41,12 @@ def default_history_path(browser: str = "chrome") -> Path:
             / "Default"
             / "History"
         )
-    # Linux e altri unix
+    # Linux and other unixes
     return Path.home() / ".config" / "google-chrome" / "Default" / "History"
 
 
 def resolve_history_path(configured: str | None, browser: str = "chrome") -> Path:
-    """Risolve il percorso configurato (con espansione di ~ e variabili) o l'auto-default."""
+    """Resolve the configured path (expanding ~ and variables), or the auto default."""
     if configured:
         expanded = os.path.expandvars(os.path.expanduser(configured))
         return Path(expanded)
@@ -54,16 +54,16 @@ def resolve_history_path(configured: str | None, browser: str = "chrome") -> Pat
 
 
 def _copy_locked_db(src: Path) -> Path:
-    """Copia il DB (e i suoi file WAL/SHM) in una directory temporanea."""
+    """Copy the DB (and its WAL/SHM files) into a temporary directory."""
     if not src.exists():
         raise FileNotFoundError(
-            f"File History non trovato: {src}. "
-            "Verifica il percorso in config (source.history_path)."
+            f"History file not found: {src}. "
+            "Check the path in the config (source.history_path)."
         )
     tmp_dir = Path(tempfile.mkdtemp(prefix="chrono_hist_"))
     dst = tmp_dir / "History"
     shutil.copy2(src, dst)
-    # Copia anche gli eventuali sidecar WAL/SHM per una lettura coerente.
+    # Copy any WAL/SHM sidecar files too, for a consistent read.
     for suffix in ("-wal", "-shm"):
         side = src.with_name(src.name + suffix)
         if side.exists():
@@ -77,15 +77,15 @@ def extract(
     end: datetime,
     browser: str = "chrome",
 ) -> list[HistoryEntry]:
-    """Estrae le voci di cronologia nel range [start, end].
+    """Extract the history entries in the [start, end] range.
 
     Args:
-        history_path: percorso al file History, o None per auto-rilevamento.
-        start, end: estremi del periodo (datetime; se naive assunti UTC).
-        browser: nome browser (solo 'chrome' supportato).
+        history_path: path to the History file, or None for auto-detection.
+        start, end: bounds of the period (datetimes; assumed UTC if naive).
+        browser: browser name (only 'chrome' is supported).
 
     Returns:
-        Lista di :class:`HistoryEntry` ordinate per last_visit crescente.
+        A list of :class:`HistoryEntry` sorted by ascending last_visit.
     """
     src = resolve_history_path(
         str(history_path) if history_path is not None else None, browser
@@ -96,7 +96,7 @@ def extract(
     end_micros = datetime_to_webkit_micros(end)
 
     try:
-        # Apertura in sola lettura tramite URI, per non alterare la copia.
+        # Opened read-only through a URI, so the copy is never altered.
         conn = sqlite3.connect(f"file:{tmp_db}?mode=ro", uri=True)
         try:
             rows = conn.execute(_QUERY, (start_micros, end_micros)).fetchall()

@@ -1,10 +1,10 @@
-"""Pulizia e deduplicazione locale (gratis) delle voci di cronologia.
+"""Local (free) cleaning and deduplication of history entries.
 
-Riduce drasticamente il volume prima di coinvolgere l'LLM:
-- normalizza gli URL (rimozione tracking params, trailing slash, ecc.);
-- applica blacklist di domini e keyword;
-- deduplica per URL normalizzato sommando i visit_count;
-- scarta voci sotto le soglie minime.
+Drastically reduces the volume before the LLM gets involved:
+- normalizes URLs (removing tracking params, trailing slashes, etc.);
+- applies domain and keyword blacklists;
+- deduplicates by normalized URL, summing the visit_counts;
+- drops entries below the minimum thresholds.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import HistoryEntry
 
-# Parametri di query notoriamente di tracking, rimossi in fase di normalizzazione.
+# Query params known to be tracking-related; removed during normalization.
 _TRACKING_PARAMS = {
     "fbclid",
     "gclid",
@@ -34,7 +34,7 @@ _TRACKING_PARAMS = {
     "wickedid",
 }
 
-# Prefissi che indicano un parametro di tracking (es. utm_source, utm_medium...).
+# Prefixes that mark a param as tracking-related (e.g. utm_source, utm_medium...).
 _TRACKING_PREFIXES = ("utm_",)
 
 
@@ -46,14 +46,14 @@ def _is_tracking_param(key: str) -> bool:
 
 
 def normalize_url(url: str, strip_query: bool = True) -> str:
-    """Normalizza un URL per il confronto/dedup.
+    """Normalize a URL for comparison/dedup.
 
-    - lowercase di schema e host;
-    - rimozione di ``www.``;
-    - rimozione del fragment (#...);
-    - rimozione dei parametri di tracking (sempre) e — se ``strip_query`` —
-      di tutta la query string;
-    - rimozione del trailing slash del path (tranne la root).
+    - lowercases scheme and host;
+    - removes ``www.``;
+    - removes the fragment (#...);
+    - removes tracking params (always) and — if ``strip_query`` — the whole
+      query string;
+    - removes the trailing slash from the path (except for the root).
     """
     if not url:
         return ""
@@ -75,7 +75,7 @@ def normalize_url(url: str, strip_query: bool = True) -> str:
                 if not _is_tracking_param(k)]
         query = urlencode(kept)
 
-    # fragment sempre scartato
+    # the fragment is always discarded
     return urlunsplit((scheme, netloc, path, query, ""))
 
 
@@ -83,7 +83,7 @@ def _domain_of(url: str) -> str:
     netloc = urlsplit(url).netloc.lower()
     if netloc.startswith("www."):
         netloc = netloc[4:]
-    # rimuove eventuale porta
+    # drop any port
     return netloc.split(":", 1)[0]
 
 
@@ -103,10 +103,10 @@ def _keyword_blacklisted(url: str, keywords: list[str]) -> bool:
 
 
 def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
-    """Applica normalizzazione, filtri e dedup secondo la sezione ``filtering``.
+    """Apply normalization, filters and dedup according to the ``filtering`` section.
 
-    Restituisce una nuova lista di voci uniche (una per URL normalizzato),
-    ordinata per ``last_visit`` crescente.
+    Returns a new list of unique entries (one per normalized URL), sorted by
+    ascending ``last_visit``.
     """
     strip_query = bool(filtering.get("strip_query_params", True))
     domain_blacklist = filtering.get("domain_blacklist") or []
@@ -123,8 +123,8 @@ def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
         domain = _domain_of(norm)
         if _domain_blacklisted(domain, domain_blacklist):
             continue
-        # La keyword blacklist va valutata sull'URL originale: strip_query
-        # potrebbe altrimenti aver rimosso proprio 'login', 'checkout', ecc.
+        # The keyword blacklist must be evaluated against the original URL:
+        # strip_query may otherwise have removed the very 'login', 'checkout', etc.
         if _keyword_blacklisted(e.url, keyword_blacklist):
             continue
 
@@ -132,7 +132,7 @@ def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
 
         existing = deduped.get(norm)
         if existing is None:
-            # copia difensiva per non mutare l'input in modo sorprendente
+            # defensive copy, so the input is never mutated in surprising ways
             deduped[norm] = HistoryEntry(
                 url=e.url,
                 title=e.title,
@@ -142,7 +142,7 @@ def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
             )
         else:
             existing.visit_count += e.visit_count
-            # conserva la visita piu' recente e il titolo associato
+            # keep the most recent visit and its associated title
             if e.last_visit_micros > existing.last_visit_micros:
                 existing.last_visit_micros = e.last_visit_micros
                 if e.title:

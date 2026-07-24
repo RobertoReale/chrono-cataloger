@@ -1,13 +1,13 @@
-"""Stima (approssimativa) di token e costo per il logging.
+"""(Rough) token and cost estimation for logging.
 
-Le stime servono a dare all'utente un ordine di grandezza, non a fatturare:
-i token sono approssimati con la regola ~4 caratteri/token e i prezzi sono
-indicativi (USD per milione di token, input/output).
+The estimates exist to give the user an order of magnitude, not to bill anyone:
+tokens are approximated with the ~4 chars/token rule and the prices are
+indicative (USD per million tokens, input/output).
 """
 from __future__ import annotations
 
-# Prezzi indicativi USD per 1M token (input, output). Match per sottostringa
-# sul nome modello; usati solo per la stima nel log.
+# Indicative prices in USD per 1M tokens (input, output). Matched as a substring
+# of the model name; used only for the estimate in the log.
 _PRICE_TABLE = {
     "haiku": (1.00, 5.00),
     "sonnet": (3.00, 15.00),
@@ -19,7 +19,7 @@ _CHARS_PER_TOKEN = 4
 
 
 def estimate_tokens(text: str) -> int:
-    """Stima il numero di token da una stringa (~4 caratteri/token)."""
+    """Estimate the number of tokens in a string (~4 chars/token)."""
     return max(1, len(text) // _CHARS_PER_TOKEN)
 
 
@@ -28,7 +28,7 @@ def _price_for(model: str) -> tuple[float, float]:
     for key, price in _PRICE_TABLE.items():
         if key in m:
             return price
-    return (0.0, 0.0)  # provider locale (ollama) o modello sconosciuto
+    return (0.0, 0.0)  # local provider (ollama) or unknown model
 
 
 def estimate_cost_usd(
@@ -36,13 +36,13 @@ def estimate_cost_usd(
     input_tokens: int,
     output_tokens: int,
 ) -> float:
-    """Stima il costo in USD dati i token di input/output e il modello."""
+    """Estimate the cost in USD given the input/output tokens and the model."""
     in_price, out_price = _price_for(model)
     return (input_tokens / 1_000_000) * in_price + (output_tokens / 1_000_000) * out_price
 
 
 class CostTracker:
-    """Accumula token e costo stimati lungo un'esecuzione."""
+    """Accumulates estimated tokens and cost over a run."""
 
     def __init__(self):
         self.input_tokens = 0
@@ -56,7 +56,7 @@ class CostTracker:
 
     def as_dict(self) -> dict:
         return {
-            "input_tokens_stimati": self.input_tokens,
-            "output_tokens_stimati": self.output_tokens,
-            "costo_usd_stimato": round(self.cost_usd, 4),
+            "estimated_input_tokens": self.input_tokens,
+            "estimated_output_tokens": self.output_tokens,
+            "estimated_cost_usd": round(self.cost_usd, 4),
         }

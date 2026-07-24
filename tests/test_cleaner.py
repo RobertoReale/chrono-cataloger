@@ -33,7 +33,7 @@ def test_domain_blacklist():
 
 
 def test_keyword_blacklist_uses_original_url():
-    # 'login' e' nella query: deve essere scartata anche con strip_query attivo
+    # 'login' is in the query: it must be dropped even with strip_query enabled
     entries = [_entry("https://site.com/x?next=/login")]
     cfg = {"url_keyword_blacklist": ["login"], "strip_query_params": True}
     assert clean(entries, cfg) == []

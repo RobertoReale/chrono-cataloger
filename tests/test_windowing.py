@@ -42,7 +42,7 @@ def test_generate_windows_covers_period():
     windows = generate_windows(start, end, 30)
     assert windows[0].start == start
     assert windows[-1].end <= end
-    # nessun gap: ogni finestra inizia dove finisce (circa) la precedente
+    # no gaps: every window starts (roughly) where the previous one ended
     for a, b in zip(windows, windows[1:]):
         assert b.start > a.start
 

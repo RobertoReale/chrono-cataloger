@@ -1,9 +1,9 @@
-"""Scrittura idempotente dei file di output, per periodo e categoria.
+"""Idempotent writing of the output files, by period and category.
 
-Instrada ogni voce classificata nella sotto-cartella giusta in base al suo
-``last_visit_time`` ORIGINALE (non alla data di elaborazione), secondo la
-granularita' ``--group-by``. Evita duplicati tramite un hash (url normalizzato +
-categoria) registrato in ``state/processed_ids.json``.
+Routes every classified entry into the right sub-folder based on its ORIGINAL
+``last_visit_time`` (not the processing date), following the ``--group-by``
+granularity. Duplicates are avoided through a hash (normalized url + category)
+recorded in ``state/processed_ids.json``.
 """
 from __future__ import annotations
 
@@ -18,19 +18,19 @@ from .models import ClassifiedEntry, webkit_micros_to_datetime
 
 
 def slugify(name: str) -> str:
-    """Trasforma un nome categoria in uno slug di file sicuro.
+    """Turn a category name into a safe file slug.
 
-    "Filosofia e Storia" -> "filosofia-e-storia"
+    "Philosophy and History" -> "philosophy-and-history"
     """
     normalized = unicodedata.normalize("NFKD", name)
     ascii_str = normalized.encode("ascii", "ignore").decode("ascii")
     ascii_str = ascii_str.lower()
     ascii_str = re.sub(r"[^a-z0-9]+", "-", ascii_str).strip("-")
-    return ascii_str or "senza-categoria"
+    return ascii_str or "uncategorized"
 
 
-def _hash_entry(normalized_url: str, categoria: str) -> str:
-    h = hashlib.sha256(f"{normalized_url}\x00{categoria}".encode("utf-8"))
+def _hash_entry(normalized_url: str, category: str) -> str:
+    h = hashlib.sha256(f"{normalized_url}\x00{category}".encode("utf-8"))
     return h.hexdigest()
 
 
@@ -55,7 +55,7 @@ def save_processed_ids(path: str | Path, processed: set[str]) -> None:
 
 
 class Writer:
-    """Scrive le voci classificate nei file, in modo idempotente."""
+    """Writes the classified entries to files, idempotently."""
 
     def __init__(
         self,
@@ -72,9 +72,9 @@ class Writer:
         self.processed_ids_path = Path(processed_ids_path)
         self.processed = load_processed_ids(processed_ids_path)
 
-    # --- Bucketing temporale --------------------------------------------- #
+    # --- Time bucketing --------------------------------------------------- #
     def bucket_name(self, visit: datetime) -> str:
-        """Nome della sotto-cartella periodo per una data di visita."""
+        """Name of the period sub-folder for a given visit date."""
         visit = visit.astimezone(timezone.utc)
         gb = self.group_by
         if gb == "month":
@@ -83,7 +83,7 @@ class Writer:
             iso = visit.isocalendar()
             return f"{iso.year}-W{iso.week:02d}"
         if gb == "all":
-            return "tutto-il-periodo"
+            return "whole-period"
         if gb.startswith("days:"):
             n = int(gb.split(":", 1)[1])
             delta_days = (visit.date() - self.period_start.date()).days
@@ -91,50 +91,50 @@ class Writer:
             bucket_start = self.period_start.date() + timedelta(days=k * n)
             bucket_end = bucket_start + timedelta(days=n - 1)
             return f"{bucket_start.isoformat()}_{bucket_end.isoformat()}"
-        raise ValueError(f"group_by non valido: {self.group_by!r}")
+        raise ValueError(f"invalid group_by: {self.group_by!r}")
 
-    # --- Formattazione riga ---------------------------------------------- #
+    # --- Line formatting -------------------------------------------------- #
     def format_line(self, entry: ClassifiedEntry) -> str:
-        sintesi = entry.sintesi.strip()
+        summary = entry.summary.strip()
         url = (entry.url or "").strip()
         if url:
-            text = f"{sintesi} ({url})"
+            text = f"{summary} ({url})"
         else:
-            text = sintesi
+            text = summary
         if self.file_format == "md":
             return f"- {text}"
         return text
 
-    # --- Scrittura -------------------------------------------------------- #
+    # --- Writing ---------------------------------------------------------- #
     def write(self, entries: list[ClassifiedEntry]) -> int:
-        """Scrive le voci nuove; ritorna quante ne sono state effettivamente aggiunte.
+        """Write the new entries; returns how many were actually added.
 
-        Le voci il cui hash e' gia' in processed_ids sono ignorate (idempotenza).
+        Entries whose hash is already in processed_ids are skipped (idempotency).
         """
-        # Raggruppa per (bucket, categoria) accumulando le nuove righe.
+        # Group by (bucket, category), accumulating the new lines.
         buckets: dict[tuple[str, str], list[str]] = {}
         newly_processed: list[str] = []
 
         for entry in entries:
             norm = entry.normalized_url or entry.url or ""
-            h = _hash_entry(norm, entry.categoria)
+            h = _hash_entry(norm, entry.category)
             if h in self.processed:
                 continue
 
             if entry.last_visit_micros is None:
-                # senza timestamp non sappiamo il bucket: usa 'all'
+                # without a timestamp we cannot tell the bucket: fall back to the period start
                 visit = self.period_start
             else:
                 visit = webkit_micros_to_datetime(entry.last_visit_micros)
 
             bucket = self.bucket_name(visit)
-            key = (bucket, slugify(entry.categoria))
+            key = (bucket, slugify(entry.category))
             buckets.setdefault(key, []).append(self.format_line(entry))
 
             self.processed.add(h)
             newly_processed.append(h)
 
-        # Append effettivo su disco.
+        # Actual append to disk.
         ext = "md" if self.file_format == "md" else "txt"
         written = 0
         for (bucket, cat_slug), lines in buckets.items():

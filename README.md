@@ -1,231 +1,233 @@
-# chrono-catalogatore
+# chrono-cataloger
 
-Trasforma la **cronologia di navigazione di Chrome** in un **diario personale
-automatico**: uno storico organizzato per categoria (filosofia, libri, film,
-concetti, fatti storici…) di ciò che hai studiato, scoperto e approfondito nel
-tempo. Più in generale, è uno **strumento di analisi della propria cronologia**
-secondo categorie e prompt scelti liberamente dall'utente.
+Turns your **Chrome browsing history** into an **automatic personal diary**: a
+record organized by category (philosophy, books, films, concepts, historical
+facts…) of what you have studied, discovered and explored over time. More
+generally, it is a **tool for analyzing your own history** according to
+categories and prompts you choose freely.
 
-Gira interamente in locale, tranne la singola chiamata API al modello LLM scelto
-(Anthropic di default, sostituibile con OpenAI o un modello locale via Ollama).
+It runs entirely locally, except for the single API call to the LLM you pick
+(Anthropic by default, replaceable with OpenAI or a local model via Ollama).
 
 ```
-Archivio_Studio/
+Study_Archive/
 └── 2026-07/
-    ├── filosofia-e-storia.txt
-    ├── concetti-e-parole-nuove.txt
-    ├── libri.txt
-    ├── fatti-storici-o-attuali.txt
-    └── film.txt
+    ├── philosophy-and-history.txt
+    ├── new-concepts-and-words.txt
+    ├── books.txt
+    ├── interesting-historical-or-current-facts.txt
+    └── films.txt
 ```
 
-Esempio di `filosofia-e-storia.txt`:
+Example of `philosophy-and-history.txt`:
 
 ```
-Idee fondamentali di Hegel - Dialettica Servo-Padrone
-Il tema di tedesco di Karl Marx per l'esame di licenza liceale (12 agosto 1835)
-Idee fondamentali di Spinoza
-Carl Schmitt (Il Führer protegge il diritto) e La Notte dei lunghi coltelli
+Hegel's core ideas - the Master-Slave dialectic
+Karl Marx's German essay for his high-school leaving exam (12 August 1835)
+Spinoza's core ideas
+Carl Schmitt (The Führer upholds the law) and the Night of the Long Knives
 ```
 
-## Come funziona (pipeline)
+## How it works (pipeline)
 
 ```
 Chrome History (SQLite)
-   ├─ 1. extractor  → legge il range di date, converte i timestamp WebKit
-   ├─ 2. cleaner    → normalizza URL, rimuove tracking, blacklist, dedup   (locale, gratis)
-   ├─ 3. triage     → modello economico (Haiku), batch grandi: rilevante/rumore
-   ├─ 4. classifier → modello principale (Sonnet), batch piccoli: {categoria, sintesi, url}
-   └─ 5. writer     → scrive/aggiorna i .txt per categoria, idempotente
+   ├─ 1. extractor  → reads the date range, converts the WebKit timestamps
+   ├─ 2. cleaner    → normalizes URLs, strips tracking, blacklists, dedups  (local, free)
+   ├─ 3. triage     → cheap model (Haiku), large batches: relevant/noise
+   ├─ 4. classifier → main model (Sonnet), small batches: {category, summary, url}
+   └─ 5. writer     → writes/updates the .txt files per category, idempotently
 ```
 
-Il triage riduce il volume del 90-95% **prima** dello stadio costoso, quindi i
-batch di classificazione restano sempre piccoli. Su cronologie lunghe (un anno,
-decine di migliaia di voci) l'elaborazione procede sempre a **finestre temporali
-interne** con **checkpoint**: un'esecuzione interrotta riparte da dove si era
-fermata, senza rielaborare né ripagare le finestre già fatte.
+Triage cuts the volume by 90-95% **before** the expensive stage, so the
+classification batches always stay small. On long histories (a year, tens of
+thousands of entries) processing always proceeds in **internal time windows**
+with **checkpoints**: an interrupted run resumes where it stopped, without
+reprocessing — or paying again for — the windows already done.
 
-## Installazione
+## Installation
 
-Richiede **Python 3.11+**.
+Requires **Python 3.11+**.
 
 ```bash
-git clone https://github.com/RobertoReale/chrono-catalogatore.git
-cd chrono-catalogatore
+git clone https://github.com/RobertoReale/chrono-cataloger.git
+cd chrono-cataloger
 python -m venv .venv
 # Windows:  .venv\Scripts\activate      |  macOS/Linux:  source .venv/bin/activate
 pip install -r requirements.txt
 
-cp config.example.yaml config.yaml      # poi adatta config.yaml
-export ANTHROPIC_API_KEY=sk-ant-...     # la tua chiave (Windows: setx / $env:)
+cp config.example.yaml config.yaml      # then adapt config.yaml
+export ANTHROPIC_API_KEY=sk-ant-...     # your key (Windows: setx / $env:)
 ```
 
-## Uso da riga di comando
+## Command-line usage
 
 ```bash
-# Range di date esplicito, output mensile (default)
+# Explicit date range, monthly output (default)
 python -m src.main --from 2026-01-01 --to 2026-12-31 --group-by month
 
-# Ultimi 90 giorni, output settimanale
+# Last 90 days, weekly output
 python -m src.main --last-days 90 --group-by week
 
-# Blocchi personalizzati di 10 giorni
+# Custom 10-day blocks
 python -m src.main --from 2026-06-01 --to 2026-07-31 --group-by days:10
 
-# Un unico file per l'intero periodo
+# A single file for the whole period
 python -m src.main --from 2026-01-01 --to 2026-12-31 --group-by all
 
-# Test limitato: solo le prime 2 finestre, senza classificare/scrivere
+# Limited test: only the first 2 windows, without classifying/writing
 python -m src.main --last-days 30 --max-batches-per-run 2 --dry-run
 ```
 
-**Periodo di estrazione** (`--from/--to` o `--last-days`) e **granularità di
-output** (`--group-by`) sono indipendenti: il writer instrada ogni voce nella
-cartella giusta guardando il `last_visit_time` originale della voce, non la data
-di esecuzione.
+The **extraction period** (`--from/--to` or `--last-days`) and the **output
+granularity** (`--group-by`) are independent: the writer routes each entry into
+the right folder by looking at the entry's original `last_visit_time`, not at
+the run date.
 
-| Flag | Descrizione |
+| Flag | Description |
 |---|---|
-| `--from` / `--to` | range esplicito `YYYY-MM-DD` |
-| `--last-days N` | alternativa: ultimi N giorni da oggi |
+| `--from` / `--to` | explicit `YYYY-MM-DD` range |
+| `--last-days N` | alternative: the last N days from today |
 | `--group-by` | `month` \| `week` \| `days:N` \| `all` |
-| `--window-size-days` | dimensione finestra interna (override config) |
-| `--history-path` | percorso al file `History` di Chrome (override config) |
-| `--max-batches-per-run` | limita il numero di finestre per esecuzione (test) |
-| `--reset-checkpoint` | azzera il checkpoint e riparte da capo |
-| `--dry-run` | estrai + pulisci + triage, senza classificare né scrivere |
+| `--window-size-days` | internal window size (overrides config) |
+| `--history-path` | path to the Chrome `History` file (overrides config) |
+| `--max-batches-per-run` | limit the number of windows per run (testing) |
+| `--reset-checkpoint` | clear the checkpoint and start over |
+| `--dry-run` | extract + clean + triage, without classifying or writing |
 
-## GUI locale (Streamlit)
+## Local GUI (Streamlit)
 
-Per gestire tutto senza toccare `config.yaml` a mano:
+To manage everything without editing `config.yaml` by hand:
 
 ```bash
 streamlit run src/gui.py
 ```
 
-La GUI **non duplica** la logica: importa gli stessi moduli della CLI, salva la
-configurazione in `config.yaml` e mostra il progresso leggendo lo stesso stato.
-CLI e GUI restano quindi intercambiabili.
+The GUI **does not duplicate** the logic: it imports the same modules as the
+CLI, saves the configuration to `config.yaml` and shows progress by reading the
+same state. CLI and GUI therefore stay interchangeable.
 
-## Configurazione (`config.yaml`)
+## Configuration (`config.yaml`)
 
-Le **categorie** e i **prompt** non sono hardcoded: vivono in `config.yaml`.
-Vedi [`config.example.yaml`](config.example.yaml) per il file commentato. In breve:
+The **categories** and the **prompts** are not hardcoded: they live in
+`config.yaml`. See [`config.example.yaml`](config.example.yaml) for the
+commented file. In short:
 
-- `llm`: provider (`anthropic`/`openai`/`ollama`), modello principale, modello di triage.
-- `source.history_path`: `null` per auto-rilevamento in base al sistema operativo.
-- `processing.window_size_days`: dimensione delle finestre interne di lavoro.
-- `filtering`: blacklist domini/keyword, soglie minime, strip dei query param.
-- `triage.prompt`: i **criteri** rilevante/rumore (il formato di output lo impone il codice).
-- `classification.categories` + `classification.prompt`: le categorie e il prompt di sintesi,
-  con il placeholder `{categories_list}`.
-- `output`: cartella base, `group_by`, formato file (`txt`/`md`).
+- `llm`: provider (`anthropic`/`openai`/`ollama`), main model, triage model.
+- `source.history_path`: `null` for auto-detection based on the operating system.
+- `processing.window_size_days`: size of the internal working windows.
+- `filtering`: domain/keyword blacklists, minimum thresholds, query-param stripping.
+- `triage.prompt`: the relevant/noise **criteria** (the output format is enforced by the code).
+- `classification.categories` + `classification.prompt`: the categories and the summarization
+  prompt, with the `{categories_list}` placeholder.
+- `output`: base folder, `group_by`, file format (`txt`/`md`).
 
-### Percorso del file History di Chrome
+### Path to the Chrome History file
 
-Auto-rilevato se `source.history_path: null`. Percorsi tipici:
+Auto-detected if `source.history_path: null`. Typical paths:
 
-| OS | Percorso |
+| OS | Path |
 |---|---|
 | Windows | `%LOCALAPPDATA%\Google\Chrome\User Data\Default\History` |
 | macOS | `~/Library/Application Support/Google/Chrome/Default/History` |
 | Linux | `~/.config/google-chrome/Default/History` |
 
-> Chrome blocca il file mentre è aperto: lo strumento ne fa una **copia
-> temporanea** in sola lettura, quindi non serve chiudere il browser.
+> Chrome locks the file while it is open: the tool makes a **temporary copy** of
+> it and reads that copy read-only, so you don't need to close the browser.
 
-## Il tuning dei prompt (la parte davvero delicata)
+## Prompt tuning (the genuinely delicate part)
 
-La sfida non è ingegneristica ma di **tuning**: far sì che i prompt di triage e
-classificazione producano risultati davvero utili si affina solo guardando
-output reali e iterando. Per rendere questa iterazione sicura, il progetto separa
-nettamente due responsabilità:
+The challenge is not an engineering one but a **tuning** one: getting the triage
+and classification prompts to produce genuinely useful results only comes from
+looking at real output and iterating. To make that iteration safe, the project
+keeps two responsibilities clearly apart:
 
-- **Tu** modifichi i *criteri* (`triage.prompt`, `classification.prompt`,
-  categorie e descrizioni). È qui che si fa il tuning.
-- **Il codice** impone il *formato di output* JSON e lo re-associa alle voci
-  originali tramite indice numerico. Così cambiare i criteri non rompe mai il
-  parsing.
+- **You** edit the *criteria* (`triage.prompt`, `classification.prompt`,
+  categories and descriptions). This is where the tuning happens.
+- **The code** enforces the JSON *output format* and pairs it back to the
+  original entries through a numeric index. So changing the criteria never
+  breaks parsing.
 
-Difese già integrate contro output imperfetti dell'LLM:
+Defenses already built in against imperfect LLM output:
 
-- triage: un batch con risposta non parseabile viene **tenuto per prudenza** (un
-  falso positivo è meno grave di scartare qualcosa di rilevante — verrà comunque
-  filtrato meglio dalla classificazione);
-- classificazione: JSON malformato → **un retry** con richiesta di correzione;
-  categorie non riconosciute → scartate (con match case-insensitive al nome
-  canonico); voci senza indice → ignorate.
+- triage: a batch whose response cannot be parsed is **kept as a precaution** (a
+  false positive is less harmful than discarding something relevant — it will be
+  filtered out more accurately by classification anyway);
+- classification: malformed JSON → **one retry** with a correction request;
+  unrecognized categories → discarded (with a case-insensitive match against the
+  canonical name); entries without an index → ignored.
 
-Flusso di tuning consigliato:
+Recommended tuning loop:
 
-1. `--last-days 7 --max-batches-per-run 1` per lavorare su un campione piccolo.
-2. Guarda i `.txt` prodotti e il log in `logs/run_<data>.json` (conteggi per
-   stadio, token e costo stimati).
-3. Ritocca i prompt/categorie e rilancia. Grazie all'idempotenza puoi rilanciare
-   sullo stesso periodo senza duplicare le voci già scritte.
+1. `--last-days 7 --max-batches-per-run 1` to work on a small sample.
+2. Look at the `.txt` files produced and at the log in `logs/run_<date>.json`
+   (per-stage counts, estimated tokens and cost).
+3. Adjust the prompts/categories and run again. Thanks to idempotency you can
+   re-run over the same period without duplicating the entries already written.
 
-## Idempotenza e ripresa
+## Idempotency and resuming
 
-- `state/processed_ids.json`: hash (url normalizzato + categoria) delle voci già
-  scritte → rieseguire non duplica nulla.
-- `state/checkpoint.json`: ultima finestra completata → un rilancio salta le
-  finestre già fatte.
-- `logs/run_<data>.json`: voci per stadio, token e costo stimati per esecuzione.
+- `state/processed_ids.json`: hashes (normalized url + category) of the entries
+  already written → re-running duplicates nothing.
+- `state/checkpoint.json`: last completed window → a new run skips the windows
+  already done.
+- `logs/run_<date>.json`: entries per stage, estimated tokens and cost per run.
 
-## Automazione periodica
+## Scheduled automation
 
 ```bash
-# cron, ogni domenica sera: recupera l'ultima settimana
-0 20 * * 0 cd /path/chrono-catalogatore && python -m src.main --last-days 7 --group-by month
+# cron, every Sunday evening: catch up on the last week
+0 20 * * 0 cd /path/chrono-cataloger && python -m src.main --last-days 7 --group-by month
 ```
 
-Su Windows: Task Scheduler con lo stesso comando. Grazie a idempotenza +
-checkpoint è sicuro far girare periodicamente uno script "recupera tutto ciò che
-manca" senza duplicati né ripartenze da zero.
+On Windows: Task Scheduler with the same command. Thanks to idempotency +
+checkpoints it is safe to periodically run a "catch up on everything missing"
+script, with no duplicates and no starting from scratch.
 
-## Sviluppo e test
+## Development and tests
 
 ```bash
 pip install pytest
 pytest -q
 ```
 
-I test usano un DB SQLite sintetico in stile Chrome e un client LLM finto: non
-richiedono né Chrome né una API key, e coprono estrazione, pulizia/dedup,
-finestre/checkpoint, scrittura idempotente, parsing di triage/classificazione
-(inclusi output malformati) e la pipeline end-to-end.
+The tests use a synthetic Chrome-style SQLite DB and a fake LLM client: they
+need neither Chrome nor an API key, and they cover extraction, cleaning/dedup,
+windowing/checkpoints, idempotent writing, triage/classification parsing
+(including malformed output) and the end-to-end pipeline.
 
-## Struttura del repository
+## Repository structure
 
 ```
-chrono-catalogatore/
-├── config.example.yaml      # configurazione di riferimento commentata
+chrono-cataloger/
+├── config.example.yaml      # commented reference configuration
 ├── requirements.txt
 ├── src/
-│   ├── extractor.py         # estrazione da SQLite Chrome, per range di date
-│   ├── cleaner.py           # normalizzazione, blacklist, dedup
-│   ├── triage.py            # pre-filtro economico (Haiku)
-│   ├── llm_client.py        # interfaccia astratta ai provider LLM
-│   ├── classifier.py        # classificazione fine + sintesi (Sonnet)
-│   ├── writer.py            # scrittura file, idempotenza, granularità output
-│   ├── windowing.py         # finestre interne + checkpoint
-│   ├── config.py            # caricamento/validazione config
-│   ├── costs.py             # stima token/costo per il log
-│   ├── models.py            # modelli dati + conversione timestamp WebKit
-│   ├── main.py              # CLI di orchestrazione
-│   └── gui.py               # GUI locale (Streamlit)
+│   ├── extractor.py         # extraction from the Chrome SQLite DB, by date range
+│   ├── cleaner.py           # normalization, blacklists, dedup
+│   ├── triage.py            # cheap pre-filter (Haiku)
+│   ├── llm_client.py        # abstract interface to the LLM providers
+│   ├── classifier.py        # fine-grained classification + summaries (Sonnet)
+│   ├── writer.py            # file writing, idempotency, output granularity
+│   ├── windowing.py         # internal windows + checkpoints
+│   ├── config.py            # config loading/validation
+│   ├── costs.py             # token/cost estimation for the log
+│   ├── models.py            # data models + WebKit timestamp conversion
+│   ├── main.py              # orchestration CLI
+│   └── gui.py               # local GUI (Streamlit)
 ├── tests/
+├── DESIGN.md                # full design document
 └── README.md
 ```
 
 ## Privacy
 
-Tutta l'elaborazione è locale. L'unico dato che lascia la macchina è
-**dominio + titolo** (triage) e **url + titolo + numero di visite** (classificazione),
-inviati al provider LLM scelto. Con Ollama nulla lascia la macchina. Le cartelle
-`state/`, `logs/` e `Archivio_Studio/` contengono dati personali e sono escluse
-dal versioning tramite `.gitignore`.
+All processing is local. The only data that leaves your machine is **domain +
+title** (triage) and **url + title + visit count** (classification), sent to the
+LLM provider you chose. With Ollama, nothing leaves the machine at all. The
+`state/`, `logs/` and `Study_Archive/` folders contain personal data and are
+excluded from version control through `.gitignore`.
 
-## Licenza
+## License
 
-MIT — vedi [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

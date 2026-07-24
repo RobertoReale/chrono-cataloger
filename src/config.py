@@ -1,8 +1,8 @@
-"""Caricamento e normalizzazione della configurazione utente (``config.yaml``).
+"""Loading and normalization of the user configuration (``config.yaml``).
 
-Espone :func:`load_config` che restituisce un dizionario annidato con i valori
-di default applicati, così il resto della pipeline può accedere alle chiavi
-senza controllare ogni volta la loro presenza.
+Exposes :func:`load_config`, which returns a nested dictionary with defaults
+already applied, so the rest of the pipeline can access keys without checking
+for their presence every time.
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from typing import Any
 
 import yaml
 
-# Valori di default: rispecchiano config.example.yaml. Qualunque chiave mancante
-# nel config utente viene riempita da qui.
+# Default values: they mirror config.example.yaml. Any key missing from the user
+# config is filled in from here.
 DEFAULTS: dict[str, Any] = {
     "llm": {
         "provider": "anthropic",
@@ -39,14 +39,14 @@ DEFAULTS: dict[str, Any] = {
         "domain_blacklist": [],
         "url_keyword_blacklist": [],
         "strip_query_params": True,
-        "dedupe_by": "url_normalizzato",
+        "dedupe_by": "normalized_url",
     },
     "triage": {
         "enabled": True,
         "batch_size": 200,
         "prompt": (
-            "Ricevi una lista di voci di cronologia browser (dominio + titolo).\n"
-            "Per ciascuna rispondi solo \"rilevante\" o \"rumore\"."
+            "You are given a list of browser history entries (domain + title).\n"
+            "For each one, answer only \"relevant\" or \"noise\"."
         ),
     },
     "classification": {
@@ -55,7 +55,7 @@ DEFAULTS: dict[str, Any] = {
         "prompt": "",
     },
     "output": {
-        "base_dir": "./Archivio_Studio",
+        "base_dir": "./Study_Archive",
         "group_by": "month",
         "file_format": "txt",
         "filename_from": "category",
@@ -64,7 +64,7 @@ DEFAULTS: dict[str, Any] = {
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Merge ricorsivo: ``override`` vince, ma le sotto-chiavi mancanti restano da ``base``."""
+    """Recursive merge: ``override`` wins, but missing sub-keys stay from ``base``."""
     result = copy.deepcopy(base)
     for key, value in override.items():
         if (
@@ -79,12 +79,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def load_config(path: str | os.PathLike) -> dict:
-    """Carica ``config.yaml`` applicando i default e validando i campi critici."""
+    """Load ``config.yaml``, applying defaults and validating the critical fields."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(
-            f"File di configurazione non trovato: {p}. "
-            "Copia config.example.yaml in config.yaml."
+            f"Configuration file not found: {p}. "
+            "Copy config.example.yaml to config.yaml."
         )
     with p.open("r", encoding="utf-8") as f:
         user_cfg = yaml.safe_load(f) or {}
@@ -97,24 +97,24 @@ def load_config(path: str | os.PathLike) -> dict:
 def _validate(cfg: dict) -> None:
     provider = cfg["llm"]["provider"]
     if provider not in ("anthropic", "openai", "ollama"):
-        raise ValueError(f"provider LLM non supportato: {provider!r}")
+        raise ValueError(f"unsupported LLM provider: {provider!r}")
 
     group_by = cfg["output"]["group_by"]
     if not _valid_group_by(group_by):
         raise ValueError(
-            f"output.group_by non valido: {group_by!r} "
-            "(atteso: month | week | days:N | all)"
+            f"invalid output.group_by: {group_by!r} "
+            "(expected: month | week | days:N | all)"
         )
 
     if cfg["output"]["file_format"] not in ("txt", "md"):
-        raise ValueError("output.file_format deve essere 'txt' o 'md'")
+        raise ValueError("output.file_format must be 'txt' or 'md'")
 
     if not cfg["classification"]["categories"]:
-        raise ValueError("Nessuna categoria definita in classification.categories")
+        raise ValueError("No category defined in classification.categories")
 
     window = cfg["processing"]["window_size_days"]
     if not isinstance(window, int) or window < 1:
-        raise ValueError("processing.window_size_days deve essere un intero >= 1")
+        raise ValueError("processing.window_size_days must be an integer >= 1")
 
 
 def _valid_group_by(value: str) -> bool:
@@ -129,7 +129,7 @@ def _valid_group_by(value: str) -> bool:
 
 
 def categories_list_text(cfg: dict) -> str:
-    """Costruisce la stringa ``{categories_list}`` da iniettare nel prompt."""
+    """Build the ``{categories_list}`` string to inject into the prompt."""
     lines = []
     for cat in cfg["classification"]["categories"]:
         name = cat["name"]

@@ -13,7 +13,7 @@ def _write(tmp_path, data):
 def _minimal():
     return {
         "classification": {
-            "categories": [{"name": "Libri", "description": "libri"}],
+            "categories": [{"name": "Books", "description": "books"}],
             "prompt": "x {categories_list}",
         }
     }
@@ -33,7 +33,7 @@ def test_missing_file_raises(tmp_path):
 
 def test_invalid_group_by_rejected(tmp_path):
     data = _minimal()
-    data["output"] = {"group_by": "annuale"}
+    data["output"] = {"group_by": "yearly"}
     with pytest.raises(ValueError):
         load_config(_write(tmp_path, data))
 
@@ -53,9 +53,9 @@ def test_no_categories_rejected(tmp_path):
 
 def test_categories_list_text():
     cfg = {"classification": {"categories": [
-        {"name": "Libri", "description": "i libri"},
-        {"name": "Film", "description": ""},
+        {"name": "Books", "description": "the books"},
+        {"name": "Films", "description": ""},
     ]}}
     text = categories_list_text(cfg)
-    assert "- Libri: i libri" in text
-    assert "- Film" in text
+    assert "- Books: the books" in text
+    assert "- Films" in text

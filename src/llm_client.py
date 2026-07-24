@@ -1,13 +1,13 @@
-"""Interfaccia astratta ai provider LLM.
+"""Abstract interface to the LLM providers.
 
-Il progetto e' volutamente *provider-agnostico*: un'unica interfaccia
-:class:`LLMClient` con un adapter per Anthropic (default), OpenAI e Ollama.
-Per questo motivo si usano chiamate HTTP diirette via ``httpx`` invece di un
-SDK specifico di un singolo provider — cosi' lo stesso codice di triage e
-classificazione funziona con qualunque backend senza modifiche.
+The project is deliberately *provider-agnostic*: a single :class:`LLMClient`
+interface with one adapter for Anthropic (default), OpenAI and Ollama. That is
+why direct HTTP calls through ``httpx`` are used instead of a provider-specific
+SDK — so the same triage and classification code works with any backend without
+changes.
 
-Formato wire per Anthropic: POST https://api.anthropic.com/v1/messages
-con header ``x-api-key`` e ``anthropic-version: 2023-06-01``.
+Wire format for Anthropic: POST https://api.anthropic.com/v1/messages
+with the ``x-api-key`` header and ``anthropic-version: 2023-06-01``.
 """
 from __future__ import annotations
 
@@ -18,14 +18,14 @@ import httpx
 
 
 class LLMError(RuntimeError):
-    """Errore non recuperabile durante una chiamata all'LLM."""
+    """Unrecoverable error during an LLM call."""
 
 
 class LLMClient:
-    """Interfaccia comune a tutti i provider."""
+    """Interface common to every provider."""
 
     def complete(self, prompt: str, model: str, max_tokens: int = 4096) -> str:
-        """Invia un singolo prompt utente e restituisce il testo della risposta."""
+        """Send a single user prompt and return the response text."""
         raise NotImplementedError
 
 
@@ -44,8 +44,8 @@ class AnthropicClient(LLMClient):
     ):
         if not api_key:
             raise LLMError(
-                "API key Anthropic mancante: imposta la variabile d'ambiente "
-                "indicata in llm.api_key_env (default ANTHROPIC_API_KEY)."
+                "Missing Anthropic API key: set the environment variable "
+                "named in llm.api_key_env (ANTHROPIC_API_KEY by default)."
             )
         self._api_key = api_key
         self._base_url = (base_url or "https://api.anthropic.com").rstrip("/")
@@ -67,12 +67,12 @@ class AnthropicClient(LLMClient):
         data = _post_with_retries(
             url, headers, payload, self._max_retries, self._timeout
         )
-        # La risposta ha content = lista di blocchi; concateniamo i blocchi 'text'.
+        # The response has content = a list of blocks; concatenate the 'text' ones.
         try:
             blocks = data["content"]
             return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         except (KeyError, TypeError) as e:
-            raise LLMError(f"Risposta Anthropic malformata: {data!r}") from e
+            raise LLMError(f"Malformed Anthropic response: {data!r}") from e
 
 
 # --------------------------------------------------------------------------- #
@@ -87,7 +87,7 @@ class OpenAIClient(LLMClient):
         timeout_seconds: float = 120.0,
     ):
         if not api_key:
-            raise LLMError("API key OpenAI mancante.")
+            raise LLMError("Missing OpenAI API key.")
         self._api_key = api_key
         self._base_url = (base_url or "https://api.openai.com").rstrip("/")
         self._max_retries = max_retries
@@ -110,11 +110,11 @@ class OpenAIClient(LLMClient):
         try:
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
-            raise LLMError(f"Risposta OpenAI malformata: {data!r}") from e
+            raise LLMError(f"Malformed OpenAI response: {data!r}") from e
 
 
 # --------------------------------------------------------------------------- #
-# Ollama (modello locale)
+# Ollama (local model)
 # --------------------------------------------------------------------------- #
 class OllamaClient(LLMClient):
     def __init__(
@@ -142,11 +142,11 @@ class OllamaClient(LLMClient):
         try:
             return data["response"]
         except (KeyError, TypeError) as e:
-            raise LLMError(f"Risposta Ollama malformata: {data!r}") from e
+            raise LLMError(f"Malformed Ollama response: {data!r}") from e
 
 
 # --------------------------------------------------------------------------- #
-# Helper HTTP con retry/backoff
+# HTTP helper with retry/backoff
 # --------------------------------------------------------------------------- #
 def _post_with_retries(
     url: str,
@@ -155,7 +155,7 @@ def _post_with_retries(
     max_retries: int,
     timeout: float,
 ) -> dict:
-    """POST JSON con backoff esponenziale su rate limit (429) ed errori 5xx."""
+    """POST JSON with exponential backoff on rate limits (429) and 5xx errors."""
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -164,7 +164,7 @@ def _post_with_retries(
                 retry_after = resp.headers.get("retry-after")
                 delay = float(retry_after) if retry_after else min(2 ** attempt, 30)
                 last_exc = LLMError(
-                    f"HTTP {resp.status_code} dal provider: {resp.text[:200]}"
+                    f"HTTP {resp.status_code} from the provider: {resp.text[:200]}"
                 )
                 if attempt < max_retries:
                     time.sleep(delay)
@@ -172,7 +172,7 @@ def _post_with_retries(
                 raise last_exc
             if resp.status_code >= 400:
                 raise LLMError(
-                    f"HTTP {resp.status_code} dal provider: {resp.text[:500]}"
+                    f"HTTP {resp.status_code} from the provider: {resp.text[:500]}"
                 )
             return resp.json()
         except httpx.RequestError as e:
@@ -180,16 +180,16 @@ def _post_with_retries(
             if attempt < max_retries:
                 time.sleep(min(2 ** attempt, 30))
                 continue
-            raise LLMError(f"Errore di connessione al provider: {e}") from e
-    # Non dovrebbe mai arrivare qui
-    raise LLMError(f"Chiamata fallita dopo {max_retries + 1} tentativi: {last_exc}")
+            raise LLMError(f"Connection error to the provider: {e}") from e
+    # Should never get here
+    raise LLMError(f"Call failed after {max_retries + 1} attempts: {last_exc}")
 
 
 # --------------------------------------------------------------------------- #
 # Factory
 # --------------------------------------------------------------------------- #
 def get_client(llm_cfg: dict) -> LLMClient:
-    """Costruisce il client giusto in base alla sezione ``llm`` della config."""
+    """Build the right client based on the ``llm`` section of the config."""
     provider = llm_cfg.get("provider", "anthropic")
     base_url = llm_cfg.get("base_url")
     max_retries = int(llm_cfg.get("max_retries", 3))
@@ -203,4 +203,4 @@ def get_client(llm_cfg: dict) -> LLMClient:
         return OpenAIClient(api_key, base_url, max_retries, timeout)
     if provider == "ollama":
         return OllamaClient(base_url, max_retries, timeout)
-    raise LLMError(f"Provider LLM non supportato: {provider!r}")
+    raise LLMError(f"Unsupported LLM provider: {provider!r}")

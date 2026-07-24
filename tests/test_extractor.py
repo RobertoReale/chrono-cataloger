@@ -8,7 +8,7 @@ def test_extract_reads_range(chrome_history_db):
     end = datetime(2026, 7, 31, 23, 59, tzinfo=timezone.utc)
     entries = extract(chrome_history_db, start, end)
     urls = {e.url for e in entries}
-    # Solo le voci di luglio (non spinoza di agosto)
+    # Only the July entries (not the Spinoza one from August)
     assert any("Hegel" in e.title for e in entries)
     assert not any("spinoza" in u for u in urls)
 

@@ -1,13 +1,13 @@
-"""Classificazione fine + sintesi con il modello principale (es. Sonnet).
+"""Fine-grained classification + summarization with the main model (e.g. Sonnet).
 
-Prende le voci sopravvissute al triage, le divide in batch piccoli e chiede al
-modello di assegnare una categoria e scrivere una sintesi in stile diario.
-L'output e' JSON validato via pydantic; in caso di JSON malformato si ritenta
-una volta con una richiesta di correzione.
+Takes the entries that survived triage, splits them into small batches and asks
+the model to assign a category and write a diary-style summary. The output is
+JSON validated through pydantic; malformed JSON triggers a single retry with a
+correction request.
 
-Come per il triage: l'UTENTE definisce categorie e criteri (config), il CODICE
-impone il formato e re-inietta i metadati (last_visit, url normalizzato) dopo la
-classificazione, associando ogni risultato alla voce originale tramite indice.
+As with triage: the USER defines categories and criteria (config), the CODE
+enforces the format and re-injects the metadata (last_visit, normalized url)
+after classification, pairing each result with its source entry by index.
 """
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ from .models import ClassifiedEntry, HistoryEntry
 
 _FORMAT_INSTRUCTIONS = """
 
-FORMATO INPUT: ti viene data una lista NUMERATA di voci (formato: "N. [url] titolo (visite: X)").
-FORMATO OUTPUT: rispondi ESCLUSIVAMENTE con un array JSON. Per OGNI voce che rientra
-chiaramente in una categoria, includi un oggetto:
-  {{"i": N, "categoria": "<nome categoria esatto>", "sintesi": "<max 20 parole>", "url": "<url o stringa vuota>"}}
-- "i" e' il numero della voce a cui il risultato si riferisce (obbligatorio).
-- "categoria" deve essere ESATTAMENTE uno dei nomi elencati sopra.
-- OMETTI del tutto le voci che non si adattano chiaramente a nessuna categoria.
-- Non aggiungere testo prima o dopo l'array. Non usare markdown."""
+INPUT FORMAT: you are given a NUMBERED list of entries (format: "N. [url] title (visits: X)").
+OUTPUT FORMAT: reply EXCLUSIVELY with a JSON array. For EVERY entry that clearly
+belongs to a category, include an object:
+  {{"i": N, "category": "<exact category name>", "summary": "<max 20 words>", "url": "<url or empty string>"}}
+- "i" is the number of the entry the result refers to (required).
+- "category" must be EXACTLY one of the names listed above.
+- OMIT entirely any entry that does not clearly fit any category.
+- Do not add any text before or after the array. Do not use markdown."""
 
 _JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
 
@@ -38,11 +38,11 @@ def _build_batch_prompt(base_prompt: str, categories_text: str, batch: list[Hist
     prompt = base_prompt.replace("{categories_list}", categories_text)
     lines = []
     for idx, e in enumerate(batch, start=1):
-        title = (e.title or "").replace("\n", " ").strip() or "(senza titolo)"
+        title = (e.title or "").replace("\n", " ").strip() or "(untitled)"
         url = e.normalized_url or e.url
-        lines.append(f"{idx}. [{url}] {title} (visite: {e.visit_count})")
+        lines.append(f"{idx}. [{url}] {title} (visits: {e.visit_count})")
     listing = "\n".join(lines)
-    return f"{prompt.rstrip()}\n{_FORMAT_INSTRUCTIONS}\n\nVoci:\n{listing}"
+    return f"{prompt.rstrip()}\n{_FORMAT_INSTRUCTIONS}\n\nEntries:\n{listing}"
 
 
 def _extract_json_array(raw: str) -> list | None:
@@ -65,7 +65,7 @@ def _parse_batch(
     batch: list[HistoryEntry],
     valid_categories: set[str],
 ) -> list[ClassifiedEntry]:
-    """Trasforma la risposta grezza in ClassifiedEntry validate, re-iniettando i metadati."""
+    """Turn the raw response into validated ClassifiedEntry objects, re-injecting metadata."""
     items = _extract_json_array(raw)
     if items is None:
         return []
@@ -80,25 +80,25 @@ def _parse_batch(
             continue
         if not (1 <= i <= len(batch)):
             continue
-        categoria = str(item.get("categoria", "")).strip()
-        # Match categoria: esatto, o case-insensitive come fallback.
-        if categoria not in valid_categories:
+        category = str(item.get("category", "")).strip()
+        # Category match: exact, or case-insensitive as a fallback.
+        if category not in valid_categories:
             lowered = {c.lower(): c for c in valid_categories}
-            categoria = lowered.get(categoria.lower(), "")
-        if not categoria:
-            continue  # categoria non riconosciuta: scarta
+            category = lowered.get(category.lower(), "")
+        if not category:
+            continue  # unrecognized category: discard
 
         source = batch[i - 1]
         try:
             entry = ClassifiedEntry(
-                categoria=categoria,
-                sintesi=str(item.get("sintesi", "")).strip(),
+                category=category,
+                summary=str(item.get("summary", "")).strip(),
                 url=str(item.get("url", "") or ""),
                 last_visit_micros=source.last_visit_micros,
                 normalized_url=source.normalized_url or source.url,
             )
         except ValidationError:
-            continue  # sintesi vuota o dati non validi
+            continue  # empty summary or invalid data
         results.append(entry)
     return results
 
@@ -109,11 +109,11 @@ def classify(
     cfg: dict,
     on_progress=None,
 ) -> list[ClassifiedEntry]:
-    """Classifica le voci rilevanti in oggetti {categoria, sintesi, url}.
+    """Classify the relevant entries into {category, summary, url} objects.
 
-    Un batch con JSON malformato viene ritentato una volta con una richiesta di
-    correzione; se anche il retry fallisce, il batch viene saltato (loggato dal
-    chiamante tramite il conteggio dei risultati).
+    A batch with malformed JSON is retried once with a correction request; if the
+    retry fails too, the batch is skipped (visible to the caller through the
+    result count).
     """
     if not entries:
         return []
@@ -130,18 +130,18 @@ def classify(
     for start in range(0, len(entries), batch_size):
         batch = entries[start:start + batch_size]
         prompt = _build_batch_prompt(base_prompt, categories_text, batch)
-        # ~80 token/voce per url+sintesi in JSON
+        # ~80 tokens/entry for url+summary in JSON
         max_tokens = min(16000, 90 * len(batch) + 500)
 
         raw = client.complete(prompt, model, max_tokens=max_tokens)
         results = _parse_batch(raw, batch, valid_categories)
 
         if not results and _extract_json_array(raw) is None:
-            # JSON completamente illeggibile: un solo retry con correzione esplicita.
+            # Completely unreadable JSON: a single retry with an explicit correction.
             retry_prompt = (
                 prompt
-                + "\n\nATTENZIONE: la risposta precedente non era un array JSON valido. "
-                "Rispondi SOLO con l'array JSON, senza alcun altro testo."
+                + "\n\nWARNING: your previous response was not a valid JSON array. "
+                "Reply ONLY with the JSON array, without any other text."
             )
             raw = client.complete(retry_prompt, model, max_tokens=max_tokens)
             results = _parse_batch(raw, batch, valid_categories)

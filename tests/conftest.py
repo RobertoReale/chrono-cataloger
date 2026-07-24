@@ -1,4 +1,4 @@
-"""Fixture condivise per i test."""
+"""Shared test fixtures."""
 from __future__ import annotations
 
 import sqlite3
@@ -8,16 +8,16 @@ from pathlib import Path
 
 import pytest
 
-# Rendi importabile il pacchetto src.
+# Make the src package importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.models import datetime_to_webkit_micros  # noqa: E402
 
 
 class FakeLLMClient:
-    """Client LLM finto: risponde in base a callback fornite dal test.
+    """Fake LLM client: answers through a callback supplied by the test.
 
-    ``responder(prompt, model, max_tokens) -> str``. Registra le chiamate.
+    ``responder(prompt, model, max_tokens) -> str``. Records the calls.
     """
 
     def __init__(self, responder):
@@ -36,9 +36,9 @@ def fake_client_factory():
 
 @pytest.fixture
 def chrome_history_db(tmp_path):
-    """Crea un DB SQLite in stile Chrome History e ritorna il percorso.
+    """Create a Chrome-style History SQLite DB and return its path.
 
-    Ritorna anche un helper per costruire timestamp WebKit da datetime.
+    Also returns a helper to build WebKit timestamps from datetimes.
     """
     db_path = tmp_path / "History"
     conn = sqlite3.connect(db_path)
@@ -61,10 +61,10 @@ def chrome_history_db(tmp_path):
 
     rows = [
         ("https://en.wikipedia.org/wiki/Hegel", "Hegel - Wikipedia", 5, wk(2026, 7, 3)),
-        ("https://mail.google.com/mail/u/0", "Posta in arrivo", 40, wk(2026, 7, 4)),
-        ("https://www.youtube.com/watch?v=abc123&utm_source=x", "Documentario su Marx", 2, wk(2026, 7, 5)),
-        ("https://site.com/login?next=/home", "Accedi", 3, wk(2026, 7, 6)),
-        ("https://books.com/spinoza", "Etica di Spinoza", 1, wk(2026, 8, 2)),
+        ("https://mail.google.com/mail/u/0", "Inbox", 40, wk(2026, 7, 4)),
+        ("https://www.youtube.com/watch?v=abc123&utm_source=x", "Documentary about Marx", 2, wk(2026, 7, 5)),
+        ("https://site.com/login?next=/home", "Sign in", 3, wk(2026, 7, 6)),
+        ("https://books.com/spinoza", "Spinoza's Ethics", 1, wk(2026, 8, 2)),
     ]
     conn.executemany(
         "INSERT INTO urls (url, title, visit_count, last_visit_time) VALUES (?, ?, ?, ?)",

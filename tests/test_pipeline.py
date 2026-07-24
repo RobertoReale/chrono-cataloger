@@ -1,4 +1,4 @@
-"""Test end-to-end della pipeline con DB sintetico e client LLM finto."""
+"""End-to-end pipeline tests with a synthetic DB and a fake LLM client."""
 import json
 import re
 from types import SimpleNamespace
@@ -17,16 +17,16 @@ def _indices(prompt: str) -> list[int]:
 
 def _responder(prompt, model, max_tokens):
     idxs = _indices(prompt)
-    if '"categoria"' in prompt:
-        # Classificazione: assegna categorie alternate.
-        cats = ["Libri", "Filosofia e Storia"]
+    if '"category"' in prompt:
+        # Classification: assign alternating categories.
+        cats = ["Books", "Philosophy and History"]
         objs = [
-            {"i": i, "categoria": cats[i % 2], "sintesi": f"sintesi {i}", "url": ""}
+            {"i": i, "category": cats[i % 2], "summary": f"summary {i}", "url": ""}
             for i in idxs
         ]
         return json.dumps(objs)
-    # Triage: tutto rilevante.
-    return json.dumps([{"i": i, "v": "rilevante"} for i in idxs])
+    # Triage: everything is relevant.
+    return json.dumps([{"i": i, "v": "relevant"} for i in idxs])
 
 
 @pytest.fixture
@@ -69,14 +69,14 @@ def _make_config(tmp_path, history_db, out_dir):
             "url_keyword_blacklist": ["login"],
             "strip_query_params": True,
         },
-        "triage": {"enabled": True, "batch_size": 200, "prompt": "criteri triage"},
+        "triage": {"enabled": True, "batch_size": 200, "prompt": "triage criteria"},
         "classification": {
             "batch_size": 50,
             "categories": [
-                {"name": "Libri", "description": "libri"},
-                {"name": "Filosofia e Storia", "description": "idee"},
+                {"name": "Books", "description": "books"},
+                {"name": "Philosophy and History", "description": "ideas"},
             ],
-            "prompt": "Categorie:\n{categories_list}\nClassifica.",
+            "prompt": "Categories:\n{categories_list}\nClassify.",
         },
         "output": {"base_dir": str(out_dir), "group_by": "month", "file_format": "txt"},
     }
@@ -87,17 +87,17 @@ def _make_config(tmp_path, history_db, out_dir):
 
 def test_end_to_end_writes_files(patched_paths, chrome_history_db):
     tmp = patched_paths
-    out_dir = tmp / "Archivio"
+    out_dir = tmp / "Archive"
     cfg_path = _make_config(tmp, chrome_history_db, out_dir)
 
     stats = main_module.run(_args(cfg_path, out_dir))
 
-    assert stats["voci_grezze"] == 4  # luglio: hegel, mail, youtube, login
-    assert stats["voci_dopo_pulizia"] == 2  # tolte mail e login
-    assert stats["voci_dopo_triage"] == 2
-    assert stats["voci_classificate"] == 2
-    assert stats["voci_scritte"] == 2
-    # file creati
+    assert stats["raw_entries"] == 4  # July: hegel, mail, youtube, login
+    assert stats["entries_after_cleaning"] == 2  # mail and login removed
+    assert stats["entries_after_triage"] == 2
+    assert stats["entries_classified"] == 2
+    assert stats["entries_written"] == 2
+    # files created
     assert (out_dir / "2026-07").exists()
     written_files = list((out_dir / "2026-07").glob("*.txt"))
     assert written_files
@@ -105,42 +105,42 @@ def test_end_to_end_writes_files(patched_paths, chrome_history_db):
 
 def test_end_to_end_idempotent_second_run(patched_paths, chrome_history_db):
     tmp = patched_paths
-    out_dir = tmp / "Archivio"
+    out_dir = tmp / "Archive"
     cfg_path = _make_config(tmp, chrome_history_db, out_dir)
 
     main_module.run(_args(cfg_path, out_dir))
-    # Seconda esecuzione con checkpoint azzerato ma processed_ids intatto:
+    # Second run with the checkpoint cleared but processed_ids intact:
     stats2 = main_module.run(_args(cfg_path, out_dir, reset_checkpoint=True))
-    # Nessuna nuova voce scritta (idempotenza via processed_ids).
-    assert stats2["voci_scritte"] == 0
+    # No new entry written (idempotency through processed_ids).
+    assert stats2["entries_written"] == 0
 
 
 def test_checkpoint_resume_skips_completed(patched_paths, chrome_history_db):
     tmp = patched_paths
-    out_dir = tmp / "Archivio"
+    out_dir = tmp / "Archive"
     cfg_path = _make_config(tmp, chrome_history_db, out_dir)
 
     main_module.run(_args(cfg_path, out_dir))
-    # checkpoint scritto: seconda run senza reset -> 0 finestre da processare
+    # checkpoint written: a second run without reset -> 0 windows to process
     stats2 = main_module.run(_args(cfg_path, out_dir))
-    assert stats2["finestre_da_processare"] == 0
+    assert stats2["windows_to_process"] == 0
 
 
 def test_dry_run_writes_nothing(patched_paths, chrome_history_db):
     tmp = patched_paths
-    out_dir = tmp / "Archivio"
+    out_dir = tmp / "Archive"
     cfg_path = _make_config(tmp, chrome_history_db, out_dir)
     stats = main_module.run(_args(cfg_path, out_dir, dry_run=True))
-    assert stats["voci_scritte"] == 0
+    assert stats["entries_written"] == 0
     assert not out_dir.exists() or not list(out_dir.glob("**/*.txt"))
 
 
 def test_log_written(patched_paths, chrome_history_db):
     tmp = patched_paths
-    out_dir = tmp / "Archivio"
+    out_dir = tmp / "Archive"
     cfg_path = _make_config(tmp, chrome_history_db, out_dir)
     main_module.run(_args(cfg_path, out_dir))
     logs = list((tmp / "logs").glob("run_*.json"))
     assert logs
     data = json.loads(logs[0].read_text(encoding="utf-8"))
-    assert "costi" in data
+    assert "costs" in data
