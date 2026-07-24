@@ -38,7 +38,10 @@ def fake_client_factory():
 def chrome_history_db(tmp_path):
     """Create a Chrome-style History SQLite DB and return its path.
 
-    Also returns a helper to build WebKit timestamps from datetimes.
+    Mirrors the real schema: ``urls`` holds all-time aggregates, ``visits`` holds
+    one row per individual visit. The extractor reads ``visits``, so the two must
+    be consistent — including the Wikipedia page, which is visited both in July
+    and in August specifically to cover the windowing case.
     """
     db_path = tmp_path / "History"
     conn = sqlite3.connect(db_path)
@@ -55,21 +58,41 @@ def chrome_history_db(tmp_path):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE visits (
+            id INTEGER PRIMARY KEY,
+            url INTEGER,
+            visit_time INTEGER,
+            from_visit INTEGER,
+            transition INTEGER DEFAULT 0
+        )
+        """
+    )
 
     def wk(y, m, d):
         return datetime_to_webkit_micros(datetime(y, m, d, 12, 0, tzinfo=timezone.utc))
 
-    rows = [
-        ("https://en.wikipedia.org/wiki/Hegel", "Hegel - Wikipedia", 5, wk(2026, 7, 3)),
-        ("https://mail.google.com/mail/u/0", "Inbox", 40, wk(2026, 7, 4)),
-        ("https://www.youtube.com/watch?v=abc123&utm_source=x", "Documentary about Marx", 2, wk(2026, 7, 5)),
-        ("https://site.com/login?next=/home", "Sign in", 3, wk(2026, 7, 6)),
-        ("https://books.com/spinoza", "Spinoza's Ethics", 1, wk(2026, 8, 2)),
+    # (url, title, [visit dates]) — the visit list is the source of truth.
+    pages = [
+        ("https://en.wikipedia.org/wiki/Hegel", "Hegel - Wikipedia",
+         [wk(2026, 7, 3), wk(2026, 7, 10), wk(2026, 8, 20)]),
+        ("https://mail.google.com/mail/u/0", "Inbox", [wk(2026, 7, 4)]),
+        ("https://www.youtube.com/watch?v=abc123&utm_source=x", "Documentary about Marx",
+         [wk(2026, 7, 5), wk(2026, 7, 6)]),
+        ("https://site.com/login?next=/home", "Sign in", [wk(2026, 7, 6)]),
+        ("https://books.com/spinoza", "Spinoza's Ethics", [wk(2026, 8, 2)]),
     ]
-    conn.executemany(
-        "INSERT INTO urls (url, title, visit_count, last_visit_time) VALUES (?, ?, ?, ?)",
-        rows,
-    )
+    for url_id, (url, title, times) in enumerate(pages, start=1):
+        conn.execute(
+            "INSERT INTO urls (id, url, title, visit_count, last_visit_time) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (url_id, url, title, len(times), max(times)),
+        )
+        conn.executemany(
+            "INSERT INTO visits (url, visit_time) VALUES (?, ?)",
+            [(url_id, t) for t in times],
+        )
     conn.commit()
     conn.close()
     return db_path

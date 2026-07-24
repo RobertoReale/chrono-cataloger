@@ -34,12 +34,10 @@ DEFAULTS: dict[str, Any] = {
         "max_batches_per_run": None,
     },
     "filtering": {
-        "min_visit_duration_seconds": 0,
         "min_visit_count": 1,
         "domain_blacklist": [],
         "url_keyword_blacklist": [],
         "strip_query_params": True,
-        "dedupe_by": "normalized_url",
     },
     "triage": {
         "enabled": True,
@@ -58,7 +56,6 @@ DEFAULTS: dict[str, Any] = {
         "base_dir": "./Study_Archive",
         "group_by": "month",
         "file_format": "txt",
-        "filename_from": "category",
     },
 }
 
@@ -96,7 +93,7 @@ def load_config(path: str | os.PathLike) -> dict:
 
 def _validate(cfg: dict) -> None:
     provider = cfg["llm"]["provider"]
-    if provider not in ("anthropic", "openai", "ollama"):
+    if provider not in ("anthropic", "claude_code", "openai", "ollama"):
         raise ValueError(f"unsupported LLM provider: {provider!r}")
 
     group_by = cfg["output"]["group_by"]
@@ -109,8 +106,24 @@ def _validate(cfg: dict) -> None:
     if cfg["output"]["file_format"] not in ("txt", "md"):
         raise ValueError("output.file_format must be 'txt' or 'md'")
 
+    browser = cfg["source"]["browser"]
+    if browser != "chrome":
+        raise ValueError(
+            f"unsupported browser: {browser!r} (only 'chrome' is supported; "
+            "the extractor speaks the Chrome History schema)"
+        )
+
     if not cfg["classification"]["categories"]:
         raise ValueError("No category defined in classification.categories")
+
+    for cat in cfg["classification"]["categories"]:
+        if not isinstance(cat, dict) or not str(cat.get("name", "")).strip():
+            raise ValueError(
+                f"every classification.categories entry needs a 'name': {cat!r}"
+            )
+
+    if not str(cfg["classification"]["prompt"]).strip():
+        raise ValueError("classification.prompt is empty: nothing would be asked of the model")
 
     window = cfg["processing"]["window_size_days"]
     if not isinstance(window, int) or window < 1:

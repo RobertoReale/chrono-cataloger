@@ -135,6 +135,95 @@ def test_dry_run_writes_nothing(patched_paths, chrome_history_db):
     assert not out_dir.exists() or not list(out_dir.glob("**/*.txt"))
 
 
+def test_dry_run_leaves_checkpoint_untouched(patched_paths, chrome_history_db):
+    """A dry run must not make the following real run skip the window."""
+    tmp = patched_paths
+    out_dir = tmp / "Archive"
+    cfg_path = _make_config(tmp, chrome_history_db, out_dir)
+
+    dry = main_module.run(_args(cfg_path, out_dir, dry_run=True))
+    real = main_module.run(_args(cfg_path, out_dir))
+    # The real run still sees every window the dry run looked at, and writes.
+    assert real["windows_to_process"] == dry["windows_to_process"]
+    assert real["entries_written"] == 2
+
+
+def test_prompts_contain_no_escaped_braces(patched_paths, chrome_history_db, monkeypatch):
+    """The JSON examples must reach the model as {...}, not as {{...}}."""
+    tmp = patched_paths
+    out_dir = tmp / "Archive"
+    cfg_path = _make_config(tmp, chrome_history_db, out_dir)
+
+    seen: list[str] = []
+
+    def recording_responder(prompt, model, max_tokens):
+        seen.append(prompt)
+        return _responder(prompt, model, max_tokens)
+
+    monkeypatch.setattr(
+        main_module, "get_client", lambda cfg: FakeLLMClient(recording_responder)
+    )
+
+    main_module.run(_args(cfg_path, out_dir))
+    assert seen
+    for prompt in seen:
+        assert "{{" not in prompt and "}}" not in prompt
+
+
+def _collect_progress(cfg_path, out_dir, **over):
+    events = []
+    main_module.run(
+        _args(cfg_path, out_dir, **over),
+        on_progress=lambda s, d, t, e: events.append((s, d, t, e)),
+    )
+    return events
+
+
+def test_every_stage_reports_progress(patched_paths, chrome_history_db):
+    tmp = patched_paths
+    out_dir = tmp / "Archive"
+    cfg_path = _make_config(tmp, chrome_history_db, out_dir)
+
+    stages = {s for s, *_ in _collect_progress(cfg_path, out_dir)}
+    assert {"extraction", "cleaning", "triage", "classification", "writing"} <= stages
+
+
+def test_slow_stages_report_per_batch(patched_paths, chrome_history_db):
+    """With batch_size 1 each entry must produce its own triage/classification tick."""
+    import yaml
+    tmp = patched_paths
+    out_dir = tmp / "Archive"
+    cfg_path = _make_config(tmp, chrome_history_db, out_dir)
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    cfg["triage"]["batch_size"] = 1
+    cfg["classification"]["batch_size"] = 1
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    events = _collect_progress(cfg_path, out_dir)
+    # The July window holds the two surviving entries; a later empty window
+    # legitimately emits its own 0/0 tick, so scope the assertion to the first.
+    window = next(e[3]["window"] for e in events if e[0] == "triage")
+    ticks = [e for e in events if e[0] == "triage" and e[3]["window"] == window]
+    assert len(ticks) == 2  # two cleaned entries, one batch each
+    # Progress is monotonic and ends at the total.
+    assert [e[1] for e in ticks] == [1, 2]
+    assert all(e[2] == 2 for e in ticks)
+    assert all(e[3]["produced"] is not None for e in ticks)
+
+
+def test_triage_stage_reported_even_when_disabled(patched_paths, chrome_history_db):
+    import yaml
+    tmp = patched_paths
+    out_dir = tmp / "Archive"
+    cfg_path = _make_config(tmp, chrome_history_db, out_dir)
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    cfg["triage"]["enabled"] = False
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    stages = {s for s, *_ in _collect_progress(cfg_path, out_dir)}
+    assert "triage" in stages
+
+
 def test_log_written(patched_paths, chrome_history_db):
     tmp = patched_paths
     out_dir = tmp / "Archive"

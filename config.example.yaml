@@ -5,13 +5,18 @@
 
 # --- LLM provider ---
 llm:
-  provider: anthropic              # anthropic | openai | ollama
+  provider: anthropic              # anthropic | claude_code | openai | ollama
   model: claude-sonnet-5           # fine-grained classification
   triage_model: claude-haiku-4-5   # cheap pre-filter
   api_key_env: ANTHROPIC_API_KEY   # name of the environment variable holding the key
   # base_url: http://localhost:11434   # for ollama (the default is already correct)
   max_retries: 3
   timeout_seconds: 120
+  # --- provider: claude_code (uses the local Claude Code CLI + its
+  #     subscription login instead of an API key; no api_key_env needed) ---
+  # claude_cli_path: claude          # override if `claude` is not on PATH
+  # claude_cli_args: []              # extra CLI flags, e.g. ["--effort", "low"]
+  # timeout_seconds: 300             # the CLI is slower to start than raw HTTP
 
 # --- History source ---
 source:
@@ -30,8 +35,7 @@ processing:
 
 # --- Filtering / cleaning (free, local) ---
 filtering:
-  min_visit_duration_seconds: 0    # 0 = disabled (Chrome exposes no reliable duration)
-  min_visit_count: 1
+  min_visit_count: 1               # minimum visits *within the window* to keep an entry
   domain_blacklist:
     - mail.google.com
     - web.whatsapp.com
@@ -44,7 +48,6 @@ filtering:
     - checkout
     - dashboard
   strip_query_params: true
-  dedupe_by: normalized_url
 
 # --- Cheap triage ---
 triage:
@@ -82,11 +85,11 @@ classification:
     (e.g. a video, a specific page).
     Ignore entries that do not clearly fit any category.
     Reply ONLY in JSON, in this format:
-    [{{"category": "...", "summary": "...", "url": "..."}}]
+    [{"category": "...", "summary": "...", "url": "..."}]
 
 # --- Output ---
 output:
   base_dir: "./Study_Archive"
   group_by: month                  # month | week | days:N | all (overridable from the CLI)
   file_format: txt                 # txt | md
-  filename_from: category
+  # Files are named after the category slug, one file per category per period.

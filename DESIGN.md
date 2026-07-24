@@ -19,23 +19,22 @@ Key functional requirements:
 
 Folder structure:
 
+One folder per period, one file per category; the file names are slugs of the
+categories defined in `config.yaml`:
+
 ```
 Study_Archive/
 └── 2026-07/
-    ├── philosophy-and-history.txt
-    ├── new-concepts-and-words.txt
-    ├── books.txt
-    ├── interesting-historical-or-current-facts.txt
-    └── films.txt
+    ├── <category-a>.txt
+    ├── <category-b>.txt
+    └── <category-c>.txt
 ```
 
-Contents of a file, e.g. `philosophy-and-history.txt`:
+Contents of one such file:
 
 ```
-Hegel's core ideas - the Master-Slave dialectic
-Karl Marx's German essay for his high-school leaving exam (12 August 1835)
-Spinoza's core ideas
-Carl Schmitt (The Führer upholds the law) and the Night of the Long Knives
+<one-line summary of something read about> (<url>)
+<one-line summary of another page, no url when it adds nothing>
 ```
 
 Formatting rules:
@@ -128,13 +127,13 @@ A year of history can easily contain 20,000-80,000 raw entries. To stay efficien
 - Never process a whole year in one go: the script always works in **internal time windows** (e.g. month by month), even when the user asks for the whole year.
 - Each window goes through the full pipeline (extraction → cleaning → triage → classification → writing), then the state is saved to `state/checkpoint.json` (last completed window) and `state/processed_ids.json` (hashes of the entries already written).
 - If a run is interrupted (rate limit, crash, machine shutdown), a new run resumes from the first incomplete window, without reprocessing — or paying again for — the ones already done.
-- One log per run (`logs/run_<date>.json`): number of raw entries, after cleaning, after triage, classified, estimated tokens, estimated cost.
+- One log per run (`logs/run_<date>.json`): number of raw entries, after cleaning, after triage, classified, estimated tokens, and an estimated cost when the provider bills per token.
 - A `max_batches_per_run` config parameter to cap a test run.
 
 ## 6. Repository structure
 
 ```
-chrono-cataloger/
+.
 ├── config.yaml                  # user configuration (categories, prompts, filters, period)
 ├── config.example.yaml
 ├── requirements.txt
@@ -188,8 +187,7 @@ processing:
 
 # --- Filtering / cleaning (free, local) ---
 filtering:
-  min_visit_duration_seconds: 15
-  min_visit_count: 1
+  min_visit_count: 1               # visits *within the window*
   domain_blacklist:
     - mail.google.com
     - web.whatsapp.com
@@ -202,7 +200,6 @@ filtering:
     - checkout
     - dashboard
   strip_query_params: true
-  dedupe_by: normalized_url
 
 # --- Cheap triage ---
 triage:
@@ -247,27 +244,33 @@ output:
   base_dir: "./Study_Archive"
   group_by: month                  # month | week | days:N | all (overridable from the CLI)
   file_format: txt                 # txt | md
-  filename_from: category
 ```
+
+Output files are named after the category slug: one file per category per period.
 
 ## 8. Module details
 
 ### 8.1 `extractor.py`
 - Copies the `History` file (SQLite) to a temporary location, because Chrome locks it while running.
-- Query against the `urls` table:
+- Query joining `visits` and `urls`:
   ```sql
-  SELECT url, title, visit_count, last_visit_time
-  FROM urls
-  WHERE last_visit_time BETWEEN ? AND ?
+  SELECT u.url, u.title, COUNT(v.id), MAX(v.visit_time)
+  FROM urls u JOIN visits v ON v.url = u.id
+  WHERE v.visit_time BETWEEN ? AND ?
+  GROUP BY u.id
   ```
+  `urls` alone would not do: it stores one row per URL with the *all-time* last
+  visit and visit count, so a windowed run would miss any page last visited
+  outside the window, and would report whole-history counts.
 - Chrome timestamps are in microseconds since 1601-01-01 (the WebKit epoch): they must be converted.
-- Returns a list of `{url, title, visit_count, last_visit}` records.
+- Returns a list of `{url, title, visit_count, last_visit}` records, where
+  `visit_count` and `last_visit` are scoped to the window.
 
 ### 8.2 `cleaner.py`
 - Normalizes URLs: strips `utm_*`, `fbclid`, `session_id`, trailing slashes, etc.
 - Applies `domain_blacklist` and `url_keyword_blacklist` from the config.
 - Deduplicates by `normalized_url`, summing the `visit_count`s.
-- Drops entries below `min_visit_count` / `min_visit_duration_seconds` when configured.
+- Drops entries below `min_visit_count`.
 - Output: a reduced list of unique entries.
 
 ### 8.3 `triage.py`
@@ -375,7 +378,7 @@ A local interface (in the browser, not an app to install) to manage everything w
 
 ```
 # cron, every Sunday evening: catch up with the last week
-0 20 * * 0 cd /path/chrono-cataloger && python src/main.py --config config.yaml --last-days 7 --group-by month
+0 20 * * 0 cd /path/to/repo && python -m src.main --config config.yaml --last-days 7 --group-by month
 ```
 On Windows: Task Scheduler with the same command. Thanks to idempotency + checkpoints, it is safe to periodically run a "catch up on everything missing since the start of the year" script, with no duplicates and no starting from scratch.
 

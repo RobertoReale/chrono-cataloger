@@ -51,6 +51,32 @@ def test_no_categories_rejected(tmp_path):
         load_config(_write(tmp_path, data))
 
 
+def test_empty_classification_prompt_rejected(tmp_path):
+    data = {"classification": {"categories": [{"name": "Books"}], "prompt": "   "}}
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, data))
+
+
+def test_category_without_name_rejected(tmp_path):
+    data = {"classification": {"categories": [{"description": "no name"}], "prompt": "x"}}
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, data))
+
+
+def test_unsupported_browser_rejected(tmp_path):
+    data = _minimal()
+    data["source"] = {"browser": "firefox"}
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, data))
+
+
+def test_claude_code_provider_accepted(tmp_path):
+    data = _minimal()
+    data["llm"] = {"provider": "claude_code"}
+    cfg = load_config(_write(tmp_path, data))
+    assert cfg["llm"]["provider"] == "claude_code"
+
+
 def test_categories_list_text():
     cfg = {"classification": {"categories": [
         {"name": "Books", "description": "the books"},

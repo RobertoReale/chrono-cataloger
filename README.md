@@ -1,31 +1,30 @@
 # chrono-cataloger
 
 Turns your **Chrome browsing history** into an **automatic personal diary**: a
-record organized by category (philosophy, books, films, concepts, historical
-facts…) of what you have studied, discovered and explored over time. More
-generally, it is a **tool for analyzing your own history** according to
-categories and prompts you choose freely.
+record, organized by the categories *you* define, of what you have studied,
+discovered and explored over time. More generally, it is a **tool for analyzing
+your own history** according to categories and prompts you choose freely.
 
 It runs entirely locally, except for the single API call to the LLM you pick
 (Anthropic by default, replaceable with OpenAI or a local model via Ollama).
 
+One folder per period, one file per category — the names come from the
+categories in your `config.yaml`:
+
 ```
 Study_Archive/
 └── 2026-07/
-    ├── philosophy-and-history.txt
-    ├── new-concepts-and-words.txt
-    ├── books.txt
-    ├── interesting-historical-or-current-facts.txt
-    └── films.txt
+    ├── <category-a>.txt
+    ├── <category-b>.txt
+    └── <category-c>.txt
 ```
 
-Example of `philosophy-and-history.txt`:
+Each file is a list of one-line entries, each summarizing what a visited page
+was about, with the source URL when it is worth keeping:
 
 ```
-Hegel's core ideas - the Master-Slave dialectic
-Karl Marx's German essay for his high-school leaving exam (12 August 1835)
-Spinoza's core ideas
-Carl Schmitt (The Führer upholds the law) and the Night of the Long Knives
+<one-line summary of something you read about> (<url>)
+<one-line summary of another page, no url when it adds nothing>
 ```
 
 ## How it works (pipeline)
@@ -34,8 +33,8 @@ Carl Schmitt (The Führer upholds the law) and the Night of the Long Knives
 Chrome History (SQLite)
    ├─ 1. extractor  → reads the date range, converts the WebKit timestamps
    ├─ 2. cleaner    → normalizes URLs, strips tracking, blacklists, dedups  (local, free)
-   ├─ 3. triage     → cheap model (Haiku), large batches: relevant/noise
-   ├─ 4. classifier → main model (Sonnet), small batches: {category, summary, url}
+   ├─ 3. triage     → cheap model, large batches: relevant/noise
+   ├─ 4. classifier → main model, small batches: {category, summary, url}
    └─ 5. writer     → writes/updates the .txt files per category, idempotently
 ```
 
@@ -50,8 +49,8 @@ reprocessing — or paying again for — the windows already done.
 Requires **Python 3.11+**.
 
 ```bash
-git clone https://github.com/RobertoReale/chrono-cataloger.git
-cd chrono-cataloger
+git clone https://github.com/RobertoReale/chrono-catalogatore.git
+cd chrono-catalogatore
 python -m venv .venv
 # Windows:  .venv\Scripts\activate      |  macOS/Linux:  source .venv/bin/activate
 pip install -r requirements.txt
@@ -59,6 +58,35 @@ pip install -r requirements.txt
 cp config.example.yaml config.yaml      # then adapt config.yaml
 export ANTHROPIC_API_KEY=sk-ant-...     # your key (Windows: setx / $env:)
 ```
+
+### Using a Claude subscription instead of an API key
+
+If you already have Claude Code installed and logged in with a Pro/Max plan,
+set `llm.provider: claude_code` in `config.yaml` and skip the API key entirely.
+The classifier then shells out to `claude --print --output-format json`, which
+reuses the OAuth credentials created by `claude /login`.
+
+```yaml
+llm:
+  provider: claude_code
+  model: claude-sonnet-5
+  triage_model: claude-haiku-4-5
+  timeout_seconds: 300
+```
+
+Prerequisites: the `claude` binary on `PATH` (or `llm.claude_cli_path` pointing
+at it) and one interactive `claude` run to complete the login.
+
+Caveats compared with the `anthropic` HTTP provider:
+
+- Usage counts against the subscription's rolling limits instead of being
+  billed per token; a long run can hit those limits and stall.
+- The run log reports estimated tokens but no dollar figure: nothing is billed
+  per token, so a cost estimate would be made up.
+- `max_tokens` is not enforceable through the CLI, and each call pays ~1–2 s of
+  process startup, so large batches are noticeably slower.
+- If `ANTHROPIC_API_KEY` is set it would take precedence inside the CLI, so the
+  adapter removes it from the child process environment.
 
 ## Command-line usage
 
@@ -113,7 +141,7 @@ The **categories** and the **prompts** are not hardcoded: they live in
 `config.yaml`. See [`config.example.yaml`](config.example.yaml) for the
 commented file. In short:
 
-- `llm`: provider (`anthropic`/`openai`/`ollama`), main model, triage model.
+- `llm`: provider (`anthropic`/`claude_code`/`openai`/`ollama`), main model, triage model.
 - `source.history_path`: `null` for auto-detection based on the operating system.
 - `processing.window_size_days`: size of the internal working windows.
 - `filtering`: domain/keyword blacklists, minimum thresholds, query-param stripping.
@@ -161,7 +189,7 @@ Recommended tuning loop:
 
 1. `--last-days 7 --max-batches-per-run 1` to work on a small sample.
 2. Look at the `.txt` files produced and at the log in `logs/run_<date>.json`
-   (per-stage counts, estimated tokens and cost).
+   (per-stage counts and estimated tokens).
 3. Adjust the prompts/categories and run again. Thanks to idempotency you can
    re-run over the same period without duplicating the entries already written.
 
@@ -170,14 +198,18 @@ Recommended tuning loop:
 - `state/processed_ids.json`: hashes (normalized url + category) of the entries
   already written → re-running duplicates nothing.
 - `state/checkpoint.json`: last completed window → a new run skips the windows
-  already done.
-- `logs/run_<date>.json`: entries per stage, estimated tokens and cost per run.
+  already done. `--dry-run` deliberately does *not* touch it, so a trial run
+  never makes the real run skip a window.
+- `logs/run_<date>.json`: entries per stage and estimated tokens per run, plus a
+  cost estimate when the provider actually bills per token (`anthropic`,
+  `openai`). For `claude_code` and `ollama` the cost is reported as `null` with
+  a note, rather than a fabricated `$0`.
 
 ## Scheduled automation
 
 ```bash
 # cron, every Sunday evening: catch up on the last week
-0 20 * * 0 cd /path/chrono-cataloger && python -m src.main --last-days 7 --group-by month
+0 20 * * 0 cd /path/to/repo && python -m src.main --last-days 7 --group-by month
 ```
 
 On Windows: Task Scheduler with the same command. Thanks to idempotency +
@@ -199,15 +231,15 @@ windowing/checkpoints, idempotent writing, triage/classification parsing
 ## Repository structure
 
 ```
-chrono-cataloger/
+.
 ├── config.example.yaml      # commented reference configuration
 ├── requirements.txt
 ├── src/
 │   ├── extractor.py         # extraction from the Chrome SQLite DB, by date range
 │   ├── cleaner.py           # normalization, blacklists, dedup
-│   ├── triage.py            # cheap pre-filter (Haiku)
+│   ├── triage.py            # cheap pre-filter
 │   ├── llm_client.py        # abstract interface to the LLM providers
-│   ├── classifier.py        # fine-grained classification + summaries (Sonnet)
+│   ├── classifier.py        # fine-grained classification + summaries
 │   ├── writer.py            # file writing, idempotency, output granularity
 │   ├── windowing.py         # internal windows + checkpoints
 │   ├── config.py            # config loading/validation

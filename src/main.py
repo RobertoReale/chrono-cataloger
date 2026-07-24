@@ -53,6 +53,23 @@ class _CountingClient(LLMClient):
         return response
 
 
+def _batch_progress(on_progress, stage: str, window_key: str):
+    """Adapt the batch callbacks of triage/classifier to the pipeline signature.
+
+    ``triage`` and ``classifier`` report ``(done, total, produced)`` after every
+    batch; the pipeline speaks ``(stage, done, total, extra)``. These are the two
+    slow stages — a single batch can take minutes — so this is where per-batch
+    feedback actually matters.
+    """
+    if on_progress is None:
+        return None
+
+    def cb(done: int, total: int, produced: int) -> None:
+        on_progress(stage, done, total, {"window": window_key, "produced": produced})
+
+    return cb
+
+
 def _parse_date(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
@@ -85,7 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="run extraction+cleaning+triage without writing files (no classification)",
+        help=(
+            "run extraction+cleaning+triage without classifying or writing; "
+            "leaves the checkpoint untouched, so a later real run redoes the windows"
+        ),
     )
     return p
 
@@ -120,7 +140,7 @@ def run(args, on_progress=None) -> dict:
         todo = todo[:max_windows]
 
     # LLM client with cost tracking.
-    tracker = CostTracker()
+    tracker = CostTracker(cfg["llm"]["provider"])
     real_client = get_client(cfg["llm"])
     client = _CountingClient(real_client, tracker)
 
@@ -161,22 +181,36 @@ def run(args, on_progress=None) -> dict:
             on_progress("cleaning", len(cleaned), len(raw), {"window": w.key})
 
         survivors = triage.triage(
-            cleaned, client, cfg["triage"], cfg["llm"]["triage_model"]
+            cleaned,
+            client,
+            cfg["triage"],
+            cfg["llm"]["triage_model"],
+            on_progress=_batch_progress(on_progress, "triage", w.key),
         )
         stats["entries_after_triage"] += len(survivors)
-        if on_progress:
-            on_progress("triage", len(survivors), len(cleaned), {"window": w.key})
+        # triage() emits nothing when it has no batches to run (no entries, or
+        # disabled in config): report the stage here so none is silently skipped.
+        if on_progress and (not cleaned or not cfg["triage"].get("enabled", True)):
+            on_progress(
+                "triage", len(cleaned), len(cleaned),
+                {"window": w.key, "produced": len(survivors)},
+            )
 
         if args.dry_run:
-            # No classification/writing in dry-run mode.
-            completed.add(w.key)
-            windowing.save_checkpoint(CHECKPOINT_PATH, completed)
+            # No classification, no writing — and deliberately no checkpoint:
+            # marking the window done here would make the next real run skip it.
             continue
 
-        classified = classifier.classify(survivors, client, cfg)
+        classified = classifier.classify(
+            survivors,
+            client,
+            cfg,
+            on_progress=_batch_progress(on_progress, "classification", w.key),
+        )
         stats["entries_classified"] += len(classified)
-        if on_progress:
-            on_progress("classification", len(classified), len(survivors), {"window": w.key})
+        if on_progress and not survivors:
+            on_progress("classification", 0, 0, {"window": w.key, "produced": 0})
+
 
         written = writer.write(classified)
         stats["entries_written"] += written
@@ -217,10 +251,12 @@ def _print_summary(stats: dict) -> None:
     print(f"Classified:          {stats['entries_classified']}")
     print(f"Written (new):       {stats['entries_written']}")
     c = stats.get("costs", {})
+    cost = c.get("estimated_cost_usd")
+    cost_text = f"~${cost}" if cost is not None else c.get("cost_note", "n/a")
     print(
         f"Estimated tokens:    in={c.get('estimated_input_tokens', 0)} "
         f"out={c.get('estimated_output_tokens', 0)}  "
-        f"(~${c.get('estimated_cost_usd', 0)})"
+        f"({cost_text})"
     )
 
 
@@ -237,7 +273,9 @@ def main(argv=None) -> int:
 
 def _cli_progress(stage: str, done: int, total: int, extra: dict) -> None:
     win = extra.get("window", "")
-    print(f"[{win}] {stage}: {done}/{total}")
+    produced = extra.get("produced")
+    tail = f"  -> {produced} kept" if produced is not None else ""
+    print(f"[{win}] {stage}: {done}/{total}{tail}", flush=True)
 
 
 if __name__ == "__main__":

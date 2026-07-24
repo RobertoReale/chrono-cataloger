@@ -23,7 +23,7 @@ _FORMAT_INSTRUCTIONS = """
 
 You are given a NUMBERED list of entries (one per line, format: "N. domain — title").
 Reply EXCLUSIVELY with a JSON array, one object per entry, in the given order:
-[{{"i": 1, "v": "relevant"}}, {{"i": 2, "v": "noise"}}, ...]
+[{"i": 1, "v": "relevant"}, {"i": 2, "v": "noise"}, ...]
 where "i" is the entry number and "v" is either "relevant" or "noise".
 Do not add any text before or after the JSON array. Do not use markdown."""
 

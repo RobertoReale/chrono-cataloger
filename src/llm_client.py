@@ -11,7 +11,11 @@ with the ``x-api-key`` header and ``anthropic-version: 2023-06-01``.
 """
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
+import tempfile
 import time
 
 import httpx
@@ -73,6 +77,111 @@ class AnthropicClient(LLMClient):
             return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         except (KeyError, TypeError) as e:
             raise LLMError(f"Malformed Anthropic response: {data!r}") from e
+
+
+# --------------------------------------------------------------------------- #
+# Claude Code CLI (subscription auth, no API key)
+# --------------------------------------------------------------------------- #
+class ClaudeCodeClient(LLMClient):
+    """Runs the locally installed Claude Code CLI in headless mode.
+
+    Instead of calling api.anthropic.com with an API key, this shells out to
+    ``claude --print``, which reuses the OAuth credentials stored by
+    ``claude /login`` — i.e. the Pro/Max subscription of the machine's user.
+    No ``ANTHROPIC_API_KEY`` is needed (and if one is set it takes precedence,
+    so it is scrubbed from the child process environment).
+
+    Trade-offs vs the HTTP adapter: consumption counts against the
+    subscription's rolling usage limits rather than being billed per token,
+    ``max_tokens`` cannot be enforced, and each call pays the CLI's startup
+    cost (~1-2 s).
+    """
+
+    #: Built-in tools disabled by default: this is a pure text-in/text-out use.
+    _DEFAULT_DISALLOWED = (
+        "Bash Edit Write Read Glob Grep WebFetch WebSearch Task NotebookEdit"
+    )
+
+    def __init__(
+        self,
+        executable: str | None = None,
+        max_retries: int = 3,
+        timeout_seconds: float = 300.0,
+        extra_args: list[str] | None = None,
+    ):
+        self._exe = executable or shutil.which("claude") or "claude"
+        if not shutil.which(self._exe) and not os.path.isfile(self._exe):
+            raise LLMError(
+                f"Claude Code CLI not found ({self._exe!r}). Install it and run "
+                "`claude` once to log in with your subscription account."
+            )
+        self._max_retries = max_retries
+        self._timeout = timeout_seconds
+        self._extra_args = list(extra_args or [])
+        # Neutral working directory: avoids picking up the CLAUDE.md / settings
+        # of whatever project the script happens to be launched from.
+        self._cwd = tempfile.mkdtemp(prefix="chrono-cataloger-claude-")
+
+    def complete(self, prompt: str, model: str, max_tokens: int = 4096) -> str:
+        cmd = [
+            self._exe,
+            "--print",
+            "--output-format", "json",
+            "--model", model,
+            "--strict-mcp-config",
+            "--mcp-config", '{"mcpServers":{}}',
+            "--disallowedTools", self._DEFAULT_DISALLOWED,
+            *self._extra_args,
+        ]
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+
+        last_err: str | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=self._timeout,
+                    cwd=self._cwd,
+                    env=env,
+                )
+            except subprocess.TimeoutExpired as e:
+                last_err = f"timeout after {self._timeout}s"
+                if attempt < self._max_retries:
+                    time.sleep(min(2 ** attempt, 30))
+                    continue
+                raise LLMError(f"Claude Code CLI: {last_err}") from e
+
+            if proc.returncode != 0:
+                last_err = (proc.stderr or proc.stdout or "").strip()[:500]
+                # Usage limits / transient failures are worth retrying.
+                if attempt < self._max_retries:
+                    time.sleep(min(2 ** attempt, 30))
+                    continue
+                raise LLMError(
+                    f"Claude Code CLI exited with {proc.returncode}: {last_err}"
+                )
+
+            try:
+                data = json.loads(proc.stdout)
+            except json.JSONDecodeError as e:
+                raise LLMError(
+                    f"Malformed Claude Code CLI response: {proc.stdout[:500]!r}"
+                ) from e
+
+            if data.get("is_error"):
+                raise LLMError(f"Claude Code CLI error: {data.get('result')!r}")
+            result = data.get("result")
+            if not isinstance(result, str):
+                raise LLMError(f"Unexpected Claude Code CLI payload: {data!r}")
+            return result
+
+        raise LLMError(
+            f"Call failed after {self._max_retries + 1} attempts: {last_err}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -198,6 +307,13 @@ def get_client(llm_cfg: dict) -> LLMClient:
     if provider == "anthropic":
         api_key = os.environ.get(llm_cfg.get("api_key_env", "ANTHROPIC_API_KEY"), "")
         return AnthropicClient(api_key, base_url, max_retries, timeout)
+    if provider == "claude_code":
+        return ClaudeCodeClient(
+            executable=llm_cfg.get("claude_cli_path"),
+            max_retries=max_retries,
+            timeout_seconds=float(llm_cfg.get("timeout_seconds", 300)),
+            extra_args=llm_cfg.get("claude_cli_args"),
+        )
     if provider == "openai":
         api_key = os.environ.get(llm_cfg.get("api_key_env", "OPENAI_API_KEY"), "")
         return OpenAIClient(api_key, base_url, max_retries, timeout)

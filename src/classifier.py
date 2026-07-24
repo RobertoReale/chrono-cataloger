@@ -25,7 +25,7 @@ _FORMAT_INSTRUCTIONS = """
 INPUT FORMAT: you are given a NUMBERED list of entries (format: "N. [url] title (visits: X)").
 OUTPUT FORMAT: reply EXCLUSIVELY with a JSON array. For EVERY entry that clearly
 belongs to a category, include an object:
-  {{"i": N, "category": "<exact category name>", "summary": "<max 20 words>", "url": "<url or empty string>"}}
+  {"i": N, "category": "<exact category name>", "summary": "<max 20 words>", "url": "<url or empty string>"}
 - "i" is the number of the entry the result refers to (required).
 - "category" must be EXACTLY one of the names listed above.
 - OMIT entirely any entry that does not clearly fit any category.

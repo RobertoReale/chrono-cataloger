@@ -128,9 +128,10 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     st.header("6. LLM provider")
     pcol1, pcol2, pcol3 = st.columns(3)
+    _providers = ["anthropic", "claude_code", "openai", "ollama"]
     provider = pcol1.selectbox(
-        "Provider", ["anthropic", "openai", "ollama"],
-        index=["anthropic", "openai", "ollama"].index(cfg["llm"]["provider"]),
+        "Provider", _providers,
+        index=_providers.index(cfg["llm"]["provider"]),
     )
     model = pcol2.text_input("Main model", value=cfg["llm"]["model"])
     triage_model = pcol3.text_input("Triage model", value=cfg["llm"]["triage_model"])
@@ -140,6 +141,18 @@ def main() -> None:
     key_env = cfg["llm"]["api_key_env"]
     if provider == "ollama":
         st.info("Local provider (Ollama): no API key needed.")
+    elif provider == "claude_code":
+        import shutil
+        if shutil.which("claude"):
+            st.success(
+                "Claude Code CLI found ✓ — calls use the subscription you are "
+                "logged into (`claude /login`), no API key needed."
+            )
+        else:
+            st.warning(
+                "Claude Code CLI not found in PATH. Install it and run `claude` "
+                "once to log in."
+            )
     elif os.environ.get(key_env):
         st.success(f"Environment variable {key_env}: set ✓")
     else:
@@ -201,7 +214,9 @@ def main() -> None:
         status = st.status("Processing...", expanded=True)
 
         def progress(stage, done, total, extra):
-            status.write(f"[{extra.get('window', '')}] {stage}: {done}/{total}")
+            produced = extra.get("produced")
+            tail = f" → {produced} kept" if produced is not None else ""
+            status.write(f"[{extra.get('window', '')}] {stage}: {done}/{total}{tail}")
 
         try:
             stats = run(args, on_progress=progress)

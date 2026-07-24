@@ -2,6 +2,13 @@
 
 Chrome keeps an exclusive lock on the ``History`` file while it is running, so
 we copy it to a temporary location before opening it read-only.
+
+The query goes through the ``visits`` table rather than ``urls.last_visit_time``:
+``urls`` holds one row per URL with its all-time last visit and all-time visit
+count, so a windowed run over ``urls`` would miss every page whose last visit
+fell outside the window, and would report visit counts from the whole history.
+Joining ``visits`` gives per-window timestamps and per-window counts, which is
+what the windowing and the prompts actually mean.
 """
 from __future__ import annotations
 
@@ -16,10 +23,12 @@ from pathlib import Path
 from .models import HistoryEntry, datetime_to_webkit_micros
 
 _QUERY = """
-SELECT url, title, visit_count, last_visit_time
-FROM urls
-WHERE last_visit_time BETWEEN ? AND ?
-ORDER BY last_visit_time ASC
+SELECT u.url, u.title, COUNT(v.id) AS visits_in_window, MAX(v.visit_time) AS last_visit
+FROM urls u
+JOIN visits v ON v.url = u.id
+WHERE v.visit_time BETWEEN ? AND ?
+GROUP BY u.id
+ORDER BY last_visit ASC
 """
 
 
