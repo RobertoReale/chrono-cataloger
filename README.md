@@ -188,6 +188,28 @@ commented file. In short:
     `classification.categories`, and anything already in the file — including
     lines you wrote yourself — is preserved.
 
+### Migrating older `days:N` output
+
+`days:N` folders used to be numbered from the start of the period being
+processed, so the same day landed in a differently named folder depending on
+when the run started. They are now anchored to 1970-01-01. If you have output
+written before that change, one command moves it onto the new names:
+
+```bash
+python -m src.migrate_buckets --group-by days:10            # prints the plan
+python -m src.migrate_buckets --group-by days:10 --apply    # moves the files
+```
+
+`month`, `week` and `all` never depended on the period and need nothing. The
+idempotency hashes are built from (url, category) and carry no bucket, so
+`state/` stays valid either way.
+
+`md_rich` and `md_journal` carry a date on every row, so they are split exactly.
+`txt` and `md` do not: such a folder is moved whole when its days still belong
+to a single bucket, and reported rather than guessed at when they no longer do.
+Files containing hand-written text are left untouched and listed, and re-running
+the migration never duplicates a row.
+
 ### Path to the Chrome History file
 
 Auto-detected if `source.history_path: null`. Typical paths:
@@ -286,6 +308,8 @@ windowing/checkpoints, idempotent writing, triage/classification parsing
 │   ├── presets.py           # blacklist groups, merged with the user's list
 │   ├── costs.py             # token/cost estimation for the log
 │   ├── models.py            # data models + WebKit timestamp conversion
+│   ├── parsing.py           # tolerant extraction of the JSON the model answers with
+│   ├── migrate_buckets.py   # one-off: old days:N folders -> epoch-anchored names
 │   ├── main.py              # orchestration CLI
 │   └── gui.py               # local GUI (Streamlit)
 ├── tests/

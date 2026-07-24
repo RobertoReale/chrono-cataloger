@@ -195,6 +195,8 @@ A year of history can easily contain 20,000-80,000 raw entries. To stay efficien
 │   ├── classifier.py             # fine-grained classification + summaries (Sonnet)
 │   ├── writer.py                 # file writing, idempotency, output granularity
 │   ├── windowing.py               # splits the requested period into processable windows
+│   ├── parsing.py                 # tolerant extraction of the JSON the model answers with
+│   ├── migrate_buckets.py         # one-off: old days:N folders -> epoch-anchored names
 │   └── main.py                    # orchestration CLI
 │   └── gui.py                     # minimal local GUI (see §9)
 ├── state/
@@ -370,7 +372,7 @@ def get_client(provider: str) -> LLMClient:
 
 ### 8.7 `writer.py`
 - Takes `--group-by` to decide which sub-folder/file each classified entry goes into, based on the entry's original `last_visit_time` (not on the processing window).
-- For `days:N`, computes the bucket as the N-day block containing the visit, counted from a fixed epoch (1970-01-01). Anchoring the blocks to the period being processed instead would put the same date in a different folder on every run that started somewhere else.
+- For `days:N`, computes the bucket as the N-day block containing the visit, counted from a fixed epoch (1970-01-01). Anchoring the blocks to the period being processed instead would put the same date in a different folder on every run that started somewhere else. Output written under the old, period-anchored naming is moved onto the new one by `migrate_buckets.py` (§8.11).
 - Formats the output according to `file_format` (`txt`, `md`, `md_rich` or `md_journal`).
 - For `md_rich`: writes the heading + table header once, when the file is created,
   appends one table row per entry (pipes and newlines escaped), and regenerates
@@ -417,6 +419,34 @@ Design constraints:
   proposes the ones no filter catches yet. A shipped list cannot know those, and
   a blocked domain is a silent data loss: the user must see the number of pages
   they are giving up before ticking it.
+
+### 8.10 `parsing.py`
+
+Extracts the JSON array out of whatever the model actually replied with, shared
+by triage and classification. A greedy `\[.*\]` match is wrong in both
+directions: it swallows prose that happens to contain brackets, and it fails
+outright on a response that was cut off mid-array. Instead the scan walks the
+text bracket by bracket (aware of strings and escapes), parses every balanced
+candidate and keeps the longest valid array; failing that, it salvages a
+truncated response by keeping the objects that did close and re-closing the
+array. The caller is told which of the two happened, so a partial batch can be
+reported instead of silently shrinking.
+
+### 8.11 `migrate_buckets.py`
+
+One-off migration of output written before `days:N` was anchored to the epoch
+(§8.7). Not part of the pipeline: a separate CLI, dry-run by default.
+
+- Rows carry their own date in `md_rich`/`md_journal`, so those buckets are split
+  exactly across the new names; `txt`/`md` lines do not, so such a folder is
+  moved whole when its days still fall in one bucket and **reported rather than
+  guessed at** when they do not.
+- Files holding hand-written text are left untouched and listed. Reformatting
+  them would be a silent loss, and the archive is meant to be edited by hand.
+- Merges skip rows the target already has, so an interrupted run can simply be
+  repeated.
+- `state/processed_ids.json` is not touched: the hashes are (url, category) and
+  never encoded the bucket.
 
 ## 9. Minimal local GUI
 
