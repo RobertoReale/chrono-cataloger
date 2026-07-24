@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from .presets import preset_names
+
 # Default values: they mirror config.example.yaml. Any key missing from the user
 # config is filled in from here.
 DEFAULTS: dict[str, Any] = {
@@ -35,6 +37,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "filtering": {
         "min_visit_count": 1,
+        # Empty on purpose: an existing config must keep filtering exactly what it
+        # used to. config.example.yaml enables the recommended groups for new users.
+        "blacklist_presets": [],
         "domain_blacklist": [],
         "url_keyword_blacklist": [],
         "strip_query_params": True,
@@ -106,6 +111,13 @@ def _validate(cfg: dict) -> None:
     if cfg["output"]["file_format"] not in ("txt", "md", "md_rich", "md_journal"):
         raise ValueError(
             "output.file_format must be 'txt', 'md', 'md_rich' or 'md_journal'"
+        )
+
+    unknown = set(cfg["filtering"]["blacklist_presets"]) - set(preset_names())
+    if unknown:
+        raise ValueError(
+            f"unknown filtering.blacklist_presets: {sorted(unknown)} "
+            f"(available: {sorted(preset_names())})"
         )
 
     browser = cfg["source"]["browser"]

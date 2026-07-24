@@ -11,6 +11,7 @@ from __future__ import annotations
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import HistoryEntry
+from .presets import effective_domain_blacklist
 
 # Query params known to be tracking-related; removed during normalization.
 _TRACKING_PARAMS = {
@@ -115,7 +116,8 @@ def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
     ascending ``last_visit``.
     """
     strip_query = bool(filtering.get("strip_query_params", True))
-    domain_blacklist = filtering.get("domain_blacklist") or []
+    # The user's own blacklist, plus whatever blacklist_presets enables.
+    domain_blacklist = effective_domain_blacklist(filtering)
     keyword_blacklist = filtering.get("url_keyword_blacklist") or []
     min_visit_count = int(filtering.get("min_visit_count", 1) or 0)
 

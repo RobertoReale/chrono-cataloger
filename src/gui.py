@@ -17,9 +17,11 @@ import json
 import os
 import shutil
 import sys
-from datetime import date, datetime, timedelta
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import streamlit as st
 import yaml
@@ -27,7 +29,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from src import extractor, windowing  # noqa: E402
+from src import cleaner, extractor, presets, windowing  # noqa: E402
 from src.config import _validate as validate_cfg  # noqa: E402
 from src.config import load_config  # noqa: E402
 
@@ -101,6 +103,7 @@ def _defaults_from(cfg: dict) -> dict:
         ],
         "class_prompt": cfg["classification"]["prompt"],
         "class_batch": int(cfg["classification"]["batch_size"]),
+        "blacklist_presets": list(cfg["filtering"].get("blacklist_presets") or []),
         "domain_blacklist": "\n".join(cfg["filtering"]["domain_blacklist"]),
         "keyword_blacklist": "\n".join(cfg["filtering"]["url_keyword_blacklist"]),
         "min_visits": int(cfg["filtering"]["min_visit_count"]),
@@ -176,6 +179,7 @@ def _collect_cfg(base: dict) -> dict:
     cfg["processing"]["window_size_days"] = int(ss.window_size_days)
     cfg["processing"]["max_batches_per_run"] = int(ss.max_windows) or None
 
+    cfg["filtering"]["blacklist_presets"] = list(ss.blacklist_presets)
     cfg["filtering"]["domain_blacklist"] = _lines(ss.domain_blacklist)
     cfg["filtering"]["url_keyword_blacklist"] = _lines(ss.keyword_blacklist)
     cfg["filtering"]["min_visit_count"] = int(ss.min_visits)
@@ -606,13 +610,113 @@ def _tab_categories() -> None:
 # --------------------------------------------------------------------------- #
 # Tab: Filters & tuning
 # --------------------------------------------------------------------------- #
-def _tab_filters() -> None:
+def _domain_stats(cfg: dict, days: int) -> list[dict]:
+    """Top domains of the real history, with how much each one would cost."""
+    end = datetime.now(timezone.utc)
+    raw = extractor.extract(
+        cfg["source"]["history_path"], end - timedelta(days=days), end,
+        cfg["source"]["browser"],
+    )
+    urls: Counter = Counter()
+    visits: Counter = Counter()
+    for e in raw:
+        # chrome-extension:// & co are dropped by the cleaner anyway, and their
+        # "host" is an extension id: never propose them.
+        if urlsplit(e.url).scheme not in ("http", "https"):
+            continue
+        host = cleaner._domain_of(e.url)
+        if not host:
+            continue
+        urls[host] += 1
+        visits[host] += e.visit_count
+
+    already = presets.effective_domain_blacklist(cfg["filtering"])
+    return [
+        {"Domain": host, "URLs": n, "Visits": visits[host]}
+        for host, n in urls.most_common(60)
+        if not cleaner._domain_blacklisted(host, already)
+    ]
+
+
+def _add_to_blacklist(picked: list[str]) -> None:
+    """Append the picked domains to the blacklist textarea.
+
+    This has to be a widget callback: Streamlit refuses to assign to the state of
+    a widget that the current run already drew, and the textarea sits above the
+    button. Callbacks run before the rerun, so the assignment is legal there.
+    """
+    ss = st.session_state
+    merged = list(dict.fromkeys(_lines(ss.domain_blacklist) + picked))
+    ss.domain_blacklist = "\n".join(merged)
+    ss["_keep_domain_blacklist"] = ss.domain_blacklist
+    ss.suggestions = None
+    ss.suggestions_picked = []
+    st.toast(f"Added {len(picked)} domain(s). Save to keep them in config.yaml.")
+
+
+def _suggest_domains(cfg: dict) -> None:
+    """Read the history and let the user tick the domains to exclude."""
+    st.markdown("**Suggest domains from my history**")
+    st.caption(
+        "Reads the local history file and ranks the domains you visit most, "
+        "excluding what is already filtered. Nothing is sent anywhere."
+    )
+    s1, s2 = st.columns([1, 2])
+    days = s1.number_input(
+        "Days to analyze", min_value=7, max_value=3650, value=180, step=30,
+        key="suggest_days",
+    )
+    if s2.button("Analyze history", use_container_width=True):
+        try:
+            st.session_state.suggestions = _domain_stats(cfg, int(days))
+        except Exception as exc:  # noqa: BLE001 - surfaced in the UI
+            st.session_state.suggestions = None
+            st.error(f"Could not read the history: {exc}")
+
+    rows = st.session_state.get("suggestions")
+    if not rows:
+        if rows == []:
+            st.success("Nothing left to suggest: every top domain is already filtered.")
+        return
+
+    st.caption(
+        f"{len(rows)} domains not yet filtered, most visited first. They are what "
+        "the model would otherwise be paid to read."
+    )
+    st.dataframe(rows, hide_index=True, use_container_width=True)
+
+    labels = {f"{r['Domain']}  —  {r['URLs']} URLs": r["Domain"] for r in rows}
+    chosen = st.multiselect(
+        "Domains to exclude", list(labels), key="suggestions_picked",
+        help="Pick the ones that are noise for you, then add them to the list above.",
+    )
+    picked = [labels[c] for c in chosen]
+    st.button(
+        f"Add {len(picked)} domain(s) to the blacklist", disabled=not picked,
+        on_click=_add_to_blacklist, args=(picked,),
+    )
+
+
+def _tab_filters(cfg: dict) -> None:
     st.subheader("Local filters")
     st.caption("Applied before any model call, so they cost nothing and cut the bill.")
+
+    names = presets.preset_names()
+    st.multiselect(
+        "Ready-made blacklist groups", names, key="blacklist_presets",
+        help="Generic groups shipped with the project, merged with your own list "
+             "below. Suffix match, so a domain also covers its subdomains.",
+    )
+    enabled = presets.domains_for(list(st.session_state.blacklist_presets))
+    if enabled:
+        with st.expander(f"{len(enabled)} domains from the selected groups"):
+            st.code("\n".join(enabled))
+
     f1, f2 = st.columns(2)
     f1.text_area(
         "Blacklisted domains (one per line)", key="domain_blacklist", height=180,
-        help="Matched against the host, subdomains included.",
+        help="Your own domains, added to the groups above. "
+             "Matched against the host, subdomains included.",
     )
     f2.text_area(
         "Blacklisted URL keywords (one per line)", key="keyword_blacklist", height=180,
@@ -625,8 +729,13 @@ def _tab_filters() -> None:
     )
     c2.toggle(
         "Strip query parameters", key="strip_query",
-        help="Removes ?utm_...&co before deduplicating.",
+        help="Removes ?utm_...&co before deduplicating. The params that identify "
+             "the content itself (?v=, ?id=) are always kept, otherwise every "
+             "YouTube video would collapse into a single entry.",
     )
+
+    st.divider()
+    _suggest_domains(cfg)
 
     st.divider()
     st.subheader("Processing")
@@ -759,7 +868,7 @@ def main() -> None:
     with tabs[1]:
         _tab_categories()
     with tabs[2]:
-        _tab_filters()
+        _tab_filters(cfg)
     with tabs[3]:
         _tab_output(cfg)
     with tabs[4]:

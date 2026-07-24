@@ -36,12 +36,14 @@ processing:
 # --- Filtering / cleaning (free, local) ---
 filtering:
   min_visit_count: 1               # minimum visits *within the window* to keep an entry
+  # Ready-made groups from presets/domain_blacklist.yaml, merged with the list
+  # below. Available: search, auth_mail, social, shopping, travel_home, banking,
+  # adult, tools_hosting, dev_local, aggregators.
+  blacklist_presets: [search, auth_mail, social, shopping, travel_home, banking, adult, tools_hosting]
+  # Your own domains, on top of the presets. What is noise for you specifically
+  # (your bank, your university, your own sites) goes here: the "Suggest domains"
+  # button in the GUI finds them by looking at your real history.
   domain_blacklist:
-    - mail.google.com
-    - web.whatsapp.com
-    - facebook.com
-    - instagram.com
-    - accounts.google.com
     - localhost
   url_keyword_blacklist:
     - login

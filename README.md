@@ -147,7 +147,9 @@ Layout:
 - **🏷 Categories & prompts** — the categories in a table, plus the
   classification and triage prompts (this is where the tuning happens);
 - **⚙ Filters & tuning** — blacklists, thresholds, window size, batch sizes,
-  timeouts;
+  timeouts. **Analyze history** ranks the domains you actually visit, hides the
+  ones already filtered, and lets you tick the noise: you see `immobiliare.it —
+  3297 URLs` before deciding, instead of guessing;
 - **📄 Output** — the files produced, per period, readable and downloadable;
 - **🕘 History** — the past runs with their counters and estimated cost.
 
@@ -161,6 +163,16 @@ commented file. In short:
 - `source.history_path`: `null` for auto-detection based on the operating system.
 - `processing.window_size_days`: size of the internal working windows.
 - `filtering`: domain/keyword blacklists, minimum thresholds, query-param stripping.
+  - `blacklist_presets`: ready-made groups from
+    [`presets/domain_blacklist.yaml`](presets/domain_blacklist.yaml) — `search`,
+    `auth_mail`, `social`, `shopping`, `travel_home`, `banking`, `adult`,
+    `tools_hosting`, `dev_local`, `aggregators` — merged with your own
+    `domain_blacklist` without ever being written into it. `aggregators`
+    (reddit, medium, HN) and `dev_local` are off by default: for many people
+    those are real sources, not noise.
+  - Filtering is a *silent* data loss, so the presets are also off by default in
+    the code: an existing `config.yaml` keeps behaving exactly as before, only a
+    fresh one from `config.example.yaml` starts with the recommended groups.
 - `triage.prompt`: the relevant/noise **criteria** (the output format is enforced by the code).
 - `classification.categories` + `classification.prompt`: the categories and the summarization
   prompt, with the `{categories_list}` placeholder.
@@ -259,6 +271,8 @@ windowing/checkpoints, idempotent writing, triage/classification parsing
 .
 ├── config.example.yaml      # commented reference configuration
 ├── requirements.txt
+├── presets/
+│   └── domain_blacklist.yaml  # ready-made blacklist groups
 ├── src/
 │   ├── extractor.py         # extraction from the Chrome SQLite DB, by date range
 │   ├── cleaner.py           # normalization, blacklists, dedup
@@ -268,6 +282,7 @@ windowing/checkpoints, idempotent writing, triage/classification parsing
 │   ├── writer.py            # file writing, idempotency, output granularity
 │   ├── windowing.py         # internal windows + checkpoints
 │   ├── config.py            # config loading/validation
+│   ├── presets.py           # blacklist groups, merged with the user's list
 │   ├── costs.py             # token/cost estimation for the log
 │   ├── models.py            # data models + WebKit timestamp conversion
 │   ├── main.py              # orchestration CLI

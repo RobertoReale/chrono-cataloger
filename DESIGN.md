@@ -238,12 +238,8 @@ processing:
 # --- Filtering / cleaning (free, local) ---
 filtering:
   min_visit_count: 1               # visits *within the window*
+  blacklist_presets: [search, auth_mail, social, shopping, travel_home, banking, adult, tools_hosting]
   domain_blacklist:
-    - mail.google.com
-    - web.whatsapp.com
-    - facebook.com
-    - instagram.com
-    - accounts.google.com
     - localhost
   url_keyword_blacklist:
     - login
@@ -318,7 +314,14 @@ Output files are named after the category slug: one file per category per period
 
 ### 8.2 `cleaner.py`
 - Normalizes URLs: strips `utm_*`, `fbclid`, `session_id`, trailing slashes, etc.
-- Applies `domain_blacklist` and `url_keyword_blacklist` from the config.
+  The params that identify the content itself (`v`, `id`) survive even when
+  `strip_query_params` is on — without `?v=` every YouTube video would normalize
+  to the same `youtube.com/watch`.
+- Drops anything that is not `http(s)`: `chrome-extension://`, `file://`, `data:`
+  are internal navigations with no domain and no content.
+- Applies `url_keyword_blacklist` and the domain blacklist, which is
+  `domain_blacklist` plus the groups enabled in `blacklist_presets`
+  (see 8.9).
 - Deduplicates by `normalized_url`, summing the `visit_count`s.
 - Drops entries below `min_visit_count`.
 - Output: a reduced list of unique entries.
@@ -389,6 +392,31 @@ python src/main.py \
   --window-size-days 30
 ```
 Steps: load config → generate windows (windowing.py) → for each incomplete window: extract → clean → triage → classify → write → update checkpoint and processed_ids → log costs.
+
+### 8.9 `presets.py` and `presets/domain_blacklist.yaml`
+
+Ready-made blacklist groups (`search`, `social`, `shopping`, `travel_home`,
+`banking`, `adult`, `auth_mail`, `tools_hosting`, `dev_local`, `aggregators`), so
+a new user does not have to rediscover from scratch that search result pages are
+the single biggest source of noise.
+
+Design constraints:
+- **The groups stay in YAML, not in the code**, so they can be edited without
+  touching Python, and out of `config.yaml`, so upgrading the project updates
+  them.
+- **They are never merged into the user's list on disk.** `domain_blacklist` and
+  `blacklist_presets` are kept apart and joined only when the filters run
+  (`effective_domain_blacklist`), so the GUI can always show what came from where
+  and removing a group is one line.
+- **Off by default in `DEFAULTS`**, enabled in `config.example.yaml`. An existing
+  config keeps filtering exactly what it used to; a new one starts with the
+  recommended groups.
+- **Only generic entries belong here.** What is noise for one person specifically
+  — their bank, their university, their own sites — is found by the *Suggest
+  domains* button in the GUI, which ranks the domains of the real history and
+  proposes the ones no filter catches yet. A shipped list cannot know those, and
+  a blocked domain is a silent data loss: the user must see the number of pages
+  they are giving up before ticking it.
 
 ## 9. Minimal local GUI
 

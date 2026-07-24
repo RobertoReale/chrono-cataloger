@@ -1,0 +1,149 @@
+# =====================================================================
+# Ready-made blacklist groups, enabled from config.yaml:
+#
+#   filtering:
+#     blacklist_presets: [search, auth_mail, social, shopping]
+#
+# They are merged with filtering.domain_blacklist, they do not replace it.
+# Matching is by suffix, so "google.com" also covers every subdomain.
+#
+# These lists are deliberately generic: what is noise for you specifically
+# (your bank, your university, your own sites) belongs in your own
+# domain_blacklist. The "Suggest domains" button in the GUI finds those by
+# looking at your actual history.
+# =====================================================================
+
+# Result pages, not content. Usually the single biggest source of noise.
+search:
+  - google.com          # also removes maps, translate, mail, drive, docs, colab, gemini
+  - google.it
+  - bing.com
+  - duckduckgo.com
+  - ecosia.org
+  - search.yahoo.com
+  - search.brave.com
+
+# Login walls, webmail, calendars: pages with nothing to learn from.
+auth_mail:
+  - accounts.google.com
+  - mail.google.com
+  - login.microsoftonline.com
+  - outlook.live.com
+  - outlook.office.com
+  - outlook.office365.com
+  - outlook.cloud.microsoft
+  - login.yahoo.com
+  - id.apple.com
+  - okta.com
+  - auth0.com
+
+# Feeds and chats: high volume, no lasting content.
+social:
+  - facebook.com
+  - instagram.com
+  - tiktok.com
+  - x.com
+  - twitter.com
+  - linkedin.com
+  - snapchat.com
+  - pinterest.com
+  - web.whatsapp.com
+  - web.telegram.org
+  - discord.com
+  - messenger.com
+
+# Product pages, carts, order tracking.
+shopping:
+  - amazon.com
+  - amazon.it
+  - amazon.co.uk
+  - amazon.de
+  - ebay.com
+  - ebay.it
+  - aliexpress.com
+  - temu.com
+  - shein.com
+  - zalando.it
+  - zalando.com
+  - vinted.it
+  - vinted.com
+  - subito.it
+  - etsy.com
+
+# Booking flows and listings: heavy browsing, nothing to remember.
+travel_home:
+  - booking.com
+  - airbnb.com
+  - airbnb.it
+  - expedia.com
+  - expedia.it
+  - lastminute.com
+  - skyscanner.net
+  - skyscanner.it
+  - kayak.com
+  - tripadvisor.com
+  - tripadvisor.it
+  - ryanair.com
+  - easyjet.com
+  - trivago.it
+  - immobiliare.it
+  - idealista.it
+  - idealista.com
+  - rightmove.co.uk
+  - zillow.com
+
+# Home banking and payments.
+banking:
+  - paypal.com
+  - revolut.com
+  - wise.com
+  - n26.com
+  - stripe.com
+  - intesasanpaolo.com
+  - unicredit.it
+  - postepay.it
+  - poste.it
+  - bper.it
+  - finecobank.com
+
+# Adult sites: noise for a study diary, and rarely something you want written
+# down in a file. Remove this preset if it is not what you want.
+adult:
+  - pornhub.com
+  - xvideos.com
+  - xhamster.com
+  - xnxx.com
+  - redtube.com
+  - onlyfans.com
+  - chaturbate.com
+  - stripchat.com
+
+# Storage, converters, extension stores: tools, not readings.
+tools_hosting:
+  - drive.google.com
+  - dropbox.com
+  - mega.nz
+  - wetransfer.com
+  - gofile.io
+  - addons.mozilla.org
+  - chromewebstore.google.com
+  - open-vsx.org
+
+# Your own development environment. Off by default: on a dev machine it is
+# noise, but if you are studying through local notebooks it is not.
+dev_local:
+  - localhost
+  - 127.0.0.1
+  - 0.0.0.0
+  - vercel.app
+  - netlify.app
+  - ngrok.io
+
+# Off by default on purpose: for many people these are real reading sources,
+# not noise. Enable it only if your history says otherwise.
+aggregators:
+  - reddit.com
+  - medium.com
+  - quora.com
+  - news.ycombinator.com
+  - pinterest.com
