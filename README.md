@@ -135,6 +135,22 @@ The GUI **does not duplicate** the logic: it imports the same modules as the
 CLI, saves the configuration to `config.yaml` and shows progress by reading the
 same state. CLI and GUI therefore stay interchangeable.
 
+Layout:
+
+- **sidebar** — provider and models, credential check, save/reload/restore of
+  `config.yaml`, and the saved state (completed windows, entries already
+  written) with the buttons to clear it;
+- **▶ Run** — period, history file, output folder and granularity. Before
+  starting it shows what the run would actually do (period, windows, how many
+  are still pending) and blocks the button with an explicit message when
+  something is missing; **Dry run** stops before classification and writing;
+- **🏷 Categories & prompts** — the categories in a table, plus the
+  classification and triage prompts (this is where the tuning happens);
+- **⚙ Filters & tuning** — blacklists, thresholds, window size, batch sizes,
+  timeouts;
+- **📄 Output** — the files produced, per period, readable and downloadable;
+- **🕘 History** — the past runs with their counters and estimated cost.
+
 ## Configuration (`config.yaml`)
 
 The **categories** and the **prompts** are not hardcoded: they live in
