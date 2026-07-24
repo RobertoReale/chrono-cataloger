@@ -80,3 +80,38 @@ def test_classify_skips_entries_missing_index():
     entries = [_entry("https://x", "y")]
     client = FakeLLMClient(lambda *a: '[{"category":"Books","summary":"no index"}]')
     assert classify(entries, client, _cfg()) == []
+
+
+def test_classify_survives_prose_around_the_array():
+    """A bracket in the preamble used to cost the whole batch."""
+    entries = [_entry("https://books/spinoza", "Ethics")]
+    client = FakeLLMClient(
+        lambda *a: 'Results [for the entries you gave]:\n'
+                   '[{"i":1,"category":"Books","summary":"Ethics"}]'
+    )
+    warnings = []
+    out = classify(entries, client, _cfg(), on_warning=warnings.append)
+    assert len(out) == 1 and not warnings
+    assert len(client.calls) == 1  # no wasted correction round-trip
+
+
+def test_classify_salvages_a_truncated_response():
+    entries = [_entry(f"https://x/{i}", str(i)) for i in range(3)]
+    client = FakeLLMClient(
+        lambda *a: '[{"i":1,"category":"Books","summary":"a"},'
+                   '{"i":2,"category":"Books","summary":"b"},'
+                   '{"i":3,"category":"Bo'
+    )
+    warnings = []
+    out = classify(entries, client, _cfg(), on_warning=warnings.append)
+    assert len(out) == 2  # two of three, instead of none
+    assert warnings and "cut off" in warnings[0]
+
+
+def test_classify_reports_a_dropped_batch():
+    entries = [_entry("https://x", "y")]
+    client = FakeLLMClient(lambda *a: "I cannot do that.")
+    warnings = []
+    out = classify(entries, client, _cfg(), on_warning=warnings.append)
+    assert out == []
+    assert warnings and "dropped" in warnings[0]

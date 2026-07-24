@@ -370,7 +370,7 @@ def get_client(provider: str) -> LLMClient:
 
 ### 8.7 `writer.py`
 - Takes `--group-by` to decide which sub-folder/file each classified entry goes into, based on the entry's original `last_visit_time` (not on the processing window).
-- For `days:N`, computes the bucket as the interval `[period_start + k*N, period_start + (k+1)*N)`.
+- For `days:N`, computes the bucket as the N-day block containing the visit, counted from a fixed epoch (1970-01-01). Anchoring the blocks to the period being processed instead would put the same date in a different folder on every run that started somewhere else.
 - Formats the output according to `file_format` (`txt`, `md`, `md_rich` or `md_journal`).
 - For `md_rich`: writes the heading + table header once, when the file is created,
   appends one table row per entry (pipes and newlines escaped), and regenerates

@@ -55,11 +55,15 @@ STAGES = ["extraction", "cleaning", "triage", "classification", "writing"]
 # --------------------------------------------------------------------------- #
 # Config loading / saving
 # --------------------------------------------------------------------------- #
+#: Non-fatal remarks the loader made about the file on disk (unknown keys).
+_CFG_WARNINGS: list[str] = []
+
+
 def _load_cfg() -> dict:
     """Load config.yaml, falling back to the example file on first launch."""
-    if CONFIG_PATH.exists():
-        return load_config(CONFIG_PATH)
-    return load_config(EXAMPLE_CONFIG_PATH)
+    _CFG_WARNINGS.clear()
+    path = CONFIG_PATH if CONFIG_PATH.exists() else EXAMPLE_CONFIG_PATH
+    return load_config(path, on_warning=_CFG_WARNINGS.append)
 
 
 def _save_cfg(cfg: dict) -> None:
@@ -92,24 +96,29 @@ def _defaults_from(cfg: dict) -> dict:
         "triage_model": cfg["llm"]["triage_model"],
         "api_key_env": cfg["llm"]["api_key_env"],
         "base_url": cfg["llm"].get("base_url") or "",
-        "max_retries": int(cfg["llm"].get("max_retries", 3)),
-        "timeout_seconds": int(cfg["llm"].get("timeout_seconds", 120)),
+        "max_retries": max(0, int(cfg["llm"].get("max_retries") or 3)),
+        # The config may leave it unset (each provider then picks its own);
+        # the widget needs a concrete number, so show the HTTP default.
+        "timeout_seconds": max(10, int(cfg["llm"].get("timeout_seconds") or 120)),
         "triage_enabled": bool(cfg["triage"]["enabled"]),
-        "triage_batch": int(cfg["triage"]["batch_size"]),
+        "triage_batch": max(1, int(cfg["triage"]["batch_size"])),
         "triage_prompt": cfg["triage"]["prompt"],
         "categories": [
             {"name": c.get("name", ""), "description": c.get("description", "")}
             for c in cfg["classification"]["categories"]
+            if isinstance(c, dict)
         ],
         "class_prompt": cfg["classification"]["prompt"],
-        "class_batch": int(cfg["classification"]["batch_size"]),
+        "class_batch": max(1, int(cfg["classification"]["batch_size"])),
         "blacklist_presets": list(cfg["filtering"].get("blacklist_presets") or []),
-        "domain_blacklist": "\n".join(cfg["filtering"]["domain_blacklist"]),
-        "keyword_blacklist": "\n".join(cfg["filtering"]["url_keyword_blacklist"]),
-        "min_visits": int(cfg["filtering"]["min_visit_count"]),
+        "domain_blacklist": "\n".join(cfg["filtering"].get("domain_blacklist") or []),
+        "keyword_blacklist": "\n".join(cfg["filtering"].get("url_keyword_blacklist") or []),
+        # The widgets below clamp to their own minimum: a value outside a
+        # number_input's range makes Streamlit raise instead of drawing.
+        "min_visits": max(1, int(cfg["filtering"].get("min_visit_count") or 1)),
         "strip_query": bool(cfg["filtering"].get("strip_query_params", True)),
-        "window_size_days": int(cfg["processing"]["window_size_days"]),
-        "max_windows": int(cfg["processing"].get("max_batches_per_run") or 0),
+        "window_size_days": max(1, int(cfg["processing"]["window_size_days"])),
+        "max_windows": max(0, int(cfg["processing"].get("max_batches_per_run") or 0)),
     }
 
 
@@ -248,7 +257,7 @@ def _api_key_ready(cfg: dict) -> tuple[bool, str]:
 def _problems(cfg: dict) -> tuple[list[str], list[str]]:
     """Return (blocking errors, non-blocking warnings) for the current settings."""
     errors: list[str] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(_CFG_WARNINGS)
     ss = st.session_state
 
     if ss.period_mode == "Date range" and _period()[1] < _period()[0]:
@@ -551,6 +560,8 @@ def _show_summary(stats: dict) -> None:
         f"{c.get('estimated_output_tokens', 0)} out — {cost_text} "
         f"({c.get('cost_note', '')})"
     )
+    for warning in stats.get("warnings", []):
+        st.warning(warning, icon="⚠️")
     if stats["entries_written"] == 0 and not stats.get("_dry_run"):
         st.info(
             "Nothing new was written. Either every entry had already been written "

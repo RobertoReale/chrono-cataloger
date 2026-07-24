@@ -71,7 +71,8 @@ llm:
   provider: claude_code
   model: claude-sonnet-5
   triage_model: claude-haiku-4-5
-  timeout_seconds: 300
+  # Leave timeout_seconds unset and each provider picks its own default —
+  # 300s here, since every call pays the CLI's startup cost.
 ```
 
 Prerequisites: the `claude` binary on `PATH` (or `llm.claude_cli_path` pointing

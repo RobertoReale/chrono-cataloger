@@ -55,3 +55,24 @@ def test_triage_keeps_batch_on_unparseable_response():
     out = triage(entries, client, cfg, "m")
     # precaution: unparseable batch -> everything is kept
     assert len(out) == 2
+
+
+def test_triage_survives_prose_around_the_array():
+    entries = [_entry("https://a", "A"), _entry("https://b", "B")]
+    client = FakeLLMClient(
+        lambda *a: 'Verdicts [one per entry]:\n[{"i":1,"v":"relevant"},{"i":2,"v":"noise"}]'
+    )
+    out = triage(entries, client, {"enabled": True, "batch_size": 10, "prompt": "p"}, "m")
+    assert [e.url for e in out] == ["https://a"]
+
+
+def test_triage_warns_when_it_keeps_an_unreadable_batch():
+    entries = [_entry("https://a", "A")]
+    client = FakeLLMClient(lambda *a: "no idea")
+    warnings = []
+    out = triage(
+        entries, client, {"enabled": True, "batch_size": 10, "prompt": "p"}, "m",
+        on_warning=warnings.append,
+    )
+    assert len(out) == 1  # kept, as before
+    assert warnings and "unreadable" in warnings[0]

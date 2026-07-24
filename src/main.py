@@ -16,15 +16,15 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from src import cleaner, classifier, extractor, triage, windowing
-    from src.config import load_config
+    from src.config import load_config, valid_group_by
     from src.costs import CostTracker, estimate_tokens
-    from src.llm_client import LLMClient, get_client
+    from src.llm_client import LLMClient, LLMError, get_client
     from src.writer import Writer
 else:
     from . import cleaner, classifier, extractor, triage, windowing
-    from .config import load_config
+    from .config import load_config, valid_group_by
     from .costs import CostTracker, estimate_tokens
-    from .llm_client import LLMClient, get_client
+    from .llm_client import LLMClient, LLMError, get_client
     from .writer import Writer
 
 
@@ -115,11 +115,19 @@ def run(args, on_progress=None) -> dict:
 
     Returns a summary dictionary (also written to logs/).
     """
-    cfg = load_config(args.config)
+    warnings_seen: list[str] = []
+    cfg = load_config(args.config, on_warning=warnings_seen.append)
 
-    # CLI overrides.
+    # CLI overrides. Validated here, not where they are used: everything below
+    # costs money, and a typo should not be discovered after paying for it.
     group_by = args.group_by or cfg["output"]["group_by"]
+    if not valid_group_by(group_by):
+        raise ValueError(
+            f"invalid --group-by: {group_by!r} (expected: month | week | days:N | all)"
+        )
     window_size = args.window_size_days or cfg["processing"]["window_size_days"]
+    if window_size < 1:
+        raise ValueError("--window-size-days must be >= 1")
     history_path = args.history_path or cfg["source"].get("history_path")
     max_windows = args.max_batches_per_run
     if max_windows is None:
@@ -128,6 +136,11 @@ def run(args, on_progress=None) -> dict:
     # Period and windows.
     from_date = _parse_date(args.from_date) if args.from_date else None
     to_date = _parse_date(args.to_date) if args.to_date else None
+    if args.last_days is not None and (from_date or to_date):
+        warnings_seen.append(
+            "--last-days was given together with --from/--to: the explicit dates "
+            "are ignored."
+        )
     start, end = windowing.resolve_period(from_date, to_date, args.last_days)
     windows = windowing.generate_windows(start, end, window_size)
 
@@ -187,6 +200,7 @@ def run(args, on_progress=None) -> dict:
             cfg["triage"],
             cfg["llm"]["triage_model"],
             on_progress=_batch_progress(on_progress, "triage", w.key),
+            on_warning=warnings_seen.append,
         )
         stats["entries_after_triage"] += len(survivors)
         # triage() emits nothing when it has no batches to run (no entries, or
@@ -207,6 +221,7 @@ def run(args, on_progress=None) -> dict:
             client,
             cfg,
             on_progress=_batch_progress(on_progress, "classification", w.key),
+            on_warning=warnings_seen.append,
         )
         stats["entries_classified"] += len(classified)
         if on_progress and not survivors:
@@ -222,6 +237,7 @@ def run(args, on_progress=None) -> dict:
             on_progress("writing", written, len(classified), {"window": w.key})
 
     stats["costs"] = tracker.as_dict()
+    stats["warnings"] = warnings_seen
     _write_log(stats)
     return stats
 
@@ -259,13 +275,17 @@ def _print_summary(stats: dict) -> None:
         f"out={c.get('estimated_output_tokens', 0)}  "
         f"({cost_text})"
     )
+    for warning in stats.get("warnings", []):
+        print(f"Warning: {warning}", file=sys.stderr)
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         stats = run(args, on_progress=_cli_progress)
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, FileNotFoundError, LLMError) as e:
+        # LLMError covers the most ordinary failure of all — an unset API key —
+        # which used to reach the user as a traceback.
         print(f"Error: {e}", file=sys.stderr)
         return 2
     _print_summary(stats)

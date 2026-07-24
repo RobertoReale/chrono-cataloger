@@ -233,3 +233,54 @@ def test_log_written(patched_paths, chrome_history_db):
     assert logs
     data = json.loads(logs[0].read_text(encoding="utf-8"))
     assert "costs" in data
+
+
+def test_invalid_group_by_override_fails_before_any_llm_call(
+    patched_paths, chrome_history_db, monkeypatch
+):
+    """A CLI typo must not be discovered after a window has been paid for."""
+    out_dir = patched_paths / "out"
+    cfg_path = _make_config(patched_paths, chrome_history_db, out_dir)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        main_module, "get_client",
+        lambda cfg: FakeLLMClient(lambda p, m, t: calls.append(m) or _responder(p, m, t)),
+    )
+
+    with pytest.raises(ValueError, match="--group-by"):
+        main_module.run(_args(cfg_path, out_dir, group_by="days:x"))
+    assert calls == []
+    assert not out_dir.exists()
+
+
+def test_missing_api_key_is_reported_not_raised(
+    patched_paths, chrome_history_db, monkeypatch, capsys
+):
+    """An unset key used to reach the user as a traceback, not a message."""
+    from src.llm_client import get_client as real_get_client
+
+    out_dir = patched_paths / "out"
+    cfg_path = _make_config(patched_paths, chrome_history_db, out_dir)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(main_module, "get_client", real_get_client)
+
+    rc = main_module.main(
+        ["--config", str(cfg_path), "--from", "2026-07-01", "--to", "2026-07-05"]
+    )
+    assert rc == 2
+    assert "Missing Anthropic API key" in capsys.readouterr().err
+
+
+def test_run_reports_warnings_in_the_stats(patched_paths, chrome_history_db):
+    out_dir = patched_paths / "out"
+    cfg_path = _make_config(patched_paths, chrome_history_db, out_dir)
+    stats = main_module.run(_args(cfg_path, out_dir))
+    assert stats["warnings"] == []
+
+
+def test_conflicting_period_flags_are_reported(patched_paths, chrome_history_db):
+    out_dir = patched_paths / "out"
+    cfg_path = _make_config(patched_paths, chrome_history_db, out_dir)
+    stats = main_module.run(_args(cfg_path, out_dir, last_days=5))
+    assert any("--last-days" in w for w in stats["warnings"])

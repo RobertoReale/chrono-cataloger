@@ -11,22 +11,44 @@ import hashlib
 import json
 import re
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import ClassifiedEntry, webkit_micros_to_datetime
+
+#: Fixed anchor for the ``days:N`` buckets. Anchoring them to the period being
+#: processed instead would put the same date in a different folder on every run
+#: that started somewhere else.
+_BUCKET_EPOCH = date(1970, 1, 1)
+
+
+def _short_digest(name: str) -> str:
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:6]
 
 
 def slugify(name: str) -> str:
     """Turn a category name into a safe file slug.
 
     "Philosophy and History" -> "philosophy-and-history"
+
+    Names that transliterate to nothing at all — Cyrillic, CJK, emoji — fall back
+    to a digest of the name, so they keep one file each instead of every one of
+    them piling into a shared "uncategorized".
     """
     normalized = unicodedata.normalize("NFKD", name)
     ascii_str = normalized.encode("ascii", "ignore").decode("ascii")
     ascii_str = ascii_str.lower()
     ascii_str = re.sub(r"[^a-z0-9]+", "-", ascii_str).strip("-")
-    return ascii_str or "uncategorized"
+    return ascii_str or f"category-{_short_digest(name)}"
+
+
+def _anchor(name: str) -> str:
+    """GitHub-style heading anchor, unicode preserved.
+
+    ``slugify`` cannot be used here: it strips the very characters GitHub keeps,
+    so a "Программирование" heading would get a link pointing nowhere.
+    """
+    return re.sub(r"[^\w-]", "", name.strip().lower().replace(" ", "-"), flags=re.UNICODE)
 
 
 def _md_cell(text: str) -> str:
@@ -72,7 +94,7 @@ def _render_toc(preamble: str, categories: list[str]) -> str:
     """Refresh the TOC between the markers; leave the preamble alone if absent."""
     if _TOC_OPEN not in preamble or _TOC_CLOSE not in preamble:
         return preamble
-    links = "\n".join(f"- [{c}](#{slugify(c)})" for c in categories)
+    links = "\n".join(f"- [{c}](#{_anchor(c)})" for c in categories)
     head, rest = preamble.split(_TOC_OPEN, 1)
     _, tail = rest.split(_TOC_CLOSE, 1)
     return f"{head}{_TOC_OPEN}\n{links}\n{_TOC_CLOSE}{tail}"
@@ -92,6 +114,15 @@ def _first_heading(path: Path) -> str:
     except OSError:
         pass
     return ""
+
+
+def _days_of(group_by: str) -> int | None:
+    """The N of a ``days:N`` granularity, or None if it is not a usable one."""
+    try:
+        n = int(group_by.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return None
+    return n if n >= 1 else None
 
 
 def _hash_entry(normalized_url: str, category: str) -> str:
@@ -132,6 +163,18 @@ class Writer:
         category_order: list[str] | None = None,
     ):
         self.base_dir = Path(base_dir)
+        # Checked here rather than at the first write: bucketing only happens
+        # after a window has been extracted, triaged and classified, so a bad
+        # granularity would otherwise surface once the LLM calls are paid for.
+        if not (
+            group_by in ("month", "week", "all")
+            or (isinstance(group_by, str)
+                and group_by.startswith("days:")
+                and _days_of(group_by) is not None)
+        ):
+            raise ValueError(
+                f"invalid group_by: {group_by!r} (expected: month | week | days:N | all)"
+            )
         self.group_by = group_by
         self.file_format = file_format
         # Order the sections of a md_journal file follow; anything not listed
@@ -140,6 +183,24 @@ class Writer:
         self.period_start = period_start.astimezone(timezone.utc)
         self.processed_ids_path = Path(processed_ids_path)
         self.processed = load_processed_ids(processed_ids_path)
+        # Two categories can slugify to the same name ("AI/ML" and "AI & ML"),
+        # which would silently merge them into one file. Claim the slugs in
+        # config order so the assignment is stable across runs.
+        self._slugs: dict[str, str] = {}
+        self._slug_owner: dict[str, str] = {}
+        for name in self.category_order:
+            self.slug_for(name)
+
+    def slug_for(self, category: str) -> str:
+        """The file slug of a category, disambiguated against the ones already taken."""
+        if category in self._slugs:
+            return self._slugs[category]
+        slug = slugify(category)
+        if self._slug_owner.get(slug, category) != category:
+            slug = f"{slug}-{_short_digest(category)}"
+        self._slugs[category] = slug
+        self._slug_owner[slug] = category
+        return slug
 
     # --- Time bucketing --------------------------------------------------- #
     def bucket_name(self, visit: datetime) -> str:
@@ -153,13 +214,13 @@ class Writer:
             return f"{iso.year}-W{iso.week:02d}"
         if gb == "all":
             return "whole-period"
-        if gb.startswith("days:"):
-            n = int(gb.split(":", 1)[1])
-            delta_days = (visit.date() - self.period_start.date()).days
-            k = delta_days // n
-            bucket_start = self.period_start.date() + timedelta(days=k * n)
-            bucket_end = bucket_start + timedelta(days=n - 1)
-            return f"{bucket_start.isoformat()}_{bucket_end.isoformat()}"
+        if isinstance(gb, str) and gb.startswith("days:"):
+            n = _days_of(gb)
+            if n is not None:
+                k = (visit.date() - _BUCKET_EPOCH).days // n
+                bucket_start = _BUCKET_EPOCH + timedelta(days=k * n)
+                bucket_end = bucket_start + timedelta(days=n - 1)
+                return f"{bucket_start.isoformat()}_{bucket_end.isoformat()}"
         raise ValueError(f"invalid group_by: {self.group_by!r}")
 
     # --- Line formatting -------------------------------------------------- #
@@ -298,7 +359,7 @@ class Writer:
                 visit = webkit_micros_to_datetime(entry.last_visit_micros)
 
             bucket = self.bucket_name(visit)
-            cat_slug = slugify(entry.category)
+            cat_slug = self.slug_for(entry.category)
             key = (bucket, cat_slug)
             buckets.setdefault(key, []).append(self.format_line(entry, visit))
             cat_names.setdefault(cat_slug, entry.category)

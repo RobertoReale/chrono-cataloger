@@ -11,12 +11,11 @@ Separation of concerns:
 """
 from __future__ import annotations
 
-import json
-import re
 from urllib.parse import urlsplit
 
 from .llm_client import LLMClient
 from .models import HistoryEntry
+from .parsing import extract_json_array
 
 # Format instructions appended automatically to the user prompt.
 _FORMAT_INSTRUCTIONS = """
@@ -42,21 +41,15 @@ def _build_batch_prompt(base_prompt: str, batch: list[HistoryEntry]) -> str:
     return f"{base_prompt.rstrip()}\n{_FORMAT_INSTRUCTIONS}\n\nEntries:\n{listing}"
 
 
-_JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
-
-
 def _parse_verdicts(raw: str, batch_size: int) -> dict[int, bool]:
     """Extract {index(1-based) -> is_relevant} from the model response.
 
-    Tolerant of extra text around the JSON. If parsing fails entirely, returns an
-    empty dictionary (the caller decides the fallback).
+    Tolerant of extra text around the JSON, and of a response cut off partway
+    through. If parsing fails entirely, returns an empty dictionary (the caller
+    decides the fallback).
     """
-    match = _JSON_ARRAY_RE.search(raw or "")
-    if not match:
-        return {}
-    try:
-        items = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    items = extract_json_array(raw)
+    if items is None:
         return {}
 
     verdicts: dict[int, bool] = {}
@@ -79,6 +72,7 @@ def triage(
     triage_cfg: dict,
     triage_model: str,
     on_progress=None,
+    on_warning=None,
 ) -> list[HistoryEntry]:
     """Filter the entries, keeping only the ones the model marked as relevant.
 
@@ -106,6 +100,12 @@ def triage(
         if not verdicts:
             # Unparseable batch: keep everything, just in case.
             kept.extend(batch)
+            if on_warning:
+                on_warning(
+                    f"triage: unreadable response for entries "
+                    f"{start + 1}-{start + len(batch)}; kept all {len(batch)} "
+                    "of them, so they go to the expensive stage unfiltered"
+                )
         else:
             for idx, e in enumerate(batch, start=1):
                 # default True if the model omitted the entry (precaution)

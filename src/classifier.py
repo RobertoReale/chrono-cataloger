@@ -11,14 +11,12 @@ after classification, pairing each result with its source entry by index.
 """
 from __future__ import annotations
 
-import json
-import re
-
 from pydantic import ValidationError
 
 from .config import categories_list_text
 from .llm_client import LLMClient
 from .models import ClassifiedEntry, HistoryEntry
+from .parsing import TRUNCATED, extract_json_array_status
 
 _FORMAT_INSTRUCTIONS = """
 
@@ -31,9 +29,6 @@ belongs to a category, include an object:
 - OMIT entirely any entry that does not clearly fit any category.
 - Do not add any text before or after the array. Do not use markdown."""
 
-_JSON_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
-
-
 def _build_batch_prompt(base_prompt: str, categories_text: str, batch: list[HistoryEntry]) -> str:
     prompt = base_prompt.replace("{categories_list}", categories_text)
     lines = []
@@ -45,17 +40,6 @@ def _build_batch_prompt(base_prompt: str, categories_text: str, batch: list[Hist
     return f"{prompt.rstrip()}\n{_FORMAT_INSTRUCTIONS}\n\nEntries:\n{listing}"
 
 
-def _extract_json_array(raw: str) -> list | None:
-    match = _JSON_ARRAY_RE.search(raw or "")
-    if not match:
-        return None
-    try:
-        parsed = json.loads(match.group(0))
-        return parsed if isinstance(parsed, list) else None
-    except json.JSONDecodeError:
-        return None
-
-
 def _valid_category_names(cfg: dict) -> set[str]:
     return {c["name"] for c in cfg["classification"]["categories"]}
 
@@ -64,11 +48,15 @@ def _parse_batch(
     raw: str,
     batch: list[HistoryEntry],
     valid_categories: set[str],
-) -> list[ClassifiedEntry]:
-    """Turn the raw response into validated ClassifiedEntry objects, re-injecting metadata."""
-    items = _extract_json_array(raw)
+) -> tuple[list[ClassifiedEntry], str | None]:
+    """Turn the raw response into validated ClassifiedEntry objects, re-injecting metadata.
+
+    Returns ``(results, problem)``; ``problem`` is None when the response was
+    read in full, otherwise the reason it was not (see :mod:`.parsing`).
+    """
+    items, problem = extract_json_array_status(raw)
     if items is None:
-        return []
+        return [], problem
 
     results: list[ClassifiedEntry] = []
     for item in items:
@@ -100,7 +88,7 @@ def _parse_batch(
         except ValidationError:
             continue  # empty summary or invalid data
         results.append(entry)
-    return results
+    return results, problem
 
 
 def classify(
@@ -108,12 +96,14 @@ def classify(
     client: LLMClient,
     cfg: dict,
     on_progress=None,
+    on_warning=None,
 ) -> list[ClassifiedEntry]:
     """Classify the relevant entries into {category, summary, url} objects.
 
     A batch with malformed JSON is retried once with a correction request; if the
-    retry fails too, the batch is skipped (visible to the caller through the
-    result count).
+    retry fails too, the batch is skipped. Skipped and partially-read batches are
+    reported through ``on_warning(message)``: without it a dropped batch is
+    indistinguishable from a model that simply categorized nothing.
     """
     if not entries:
         return []
@@ -134,17 +124,31 @@ def classify(
         max_tokens = min(16000, 90 * len(batch) + 500)
 
         raw = client.complete(prompt, model, max_tokens=max_tokens)
-        results = _parse_batch(raw, batch, valid_categories)
+        results, problem = _parse_batch(raw, batch, valid_categories)
 
-        if not results and _extract_json_array(raw) is None:
-            # Completely unreadable JSON: a single retry with an explicit correction.
+        if problem is not None and not results:
+            # Nothing readable at all: a single retry with an explicit correction.
             retry_prompt = (
                 prompt
                 + "\n\nWARNING: your previous response was not a valid JSON array. "
                 "Reply ONLY with the JSON array, without any other text."
             )
             raw = client.complete(retry_prompt, model, max_tokens=max_tokens)
-            results = _parse_batch(raw, batch, valid_categories)
+            results, problem = _parse_batch(raw, batch, valid_categories)
+
+        if problem is not None and on_warning:
+            span = f"entries {start + 1}-{start + len(batch)}"
+            if problem == TRUNCATED:
+                on_warning(
+                    f"classification: response cut off for {span}; kept the "
+                    f"{len(results)} of {len(batch)} entries that came through "
+                    "(lower classification.batch_size to avoid it)"
+                )
+            else:
+                on_warning(
+                    f"classification: unreadable response for {span}, batch "
+                    f"dropped ({len(batch)} entries lost)"
+                )
 
         all_results.extend(results)
 

@@ -141,8 +141,6 @@ def clean(entries: list[HistoryEntry], filtering: dict) -> list[HistoryEntry]:
         if _keyword_blacklisted(e.url, keyword_blacklist):
             continue
 
-        e.normalized_url = norm
-
         existing = deduped.get(norm)
         if existing is None:
             # defensive copy, so the input is never mutated in surprising ways

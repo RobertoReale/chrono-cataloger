@@ -11,12 +11,14 @@ with the ``x-api-key`` header and ``anthropic-version: 2023-06-01``.
 """
 from __future__ import annotations
 
+import email.utils
 import json
 import os
 import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime, timezone
 
 import httpx
 
@@ -257,6 +259,36 @@ class OllamaClient(LLMClient):
 # --------------------------------------------------------------------------- #
 # HTTP helper with retry/backoff
 # --------------------------------------------------------------------------- #
+#: Cap on an honoured Retry-After, so a wild header cannot park the run for hours.
+_MAX_RETRY_AFTER_SECONDS = 300.0
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Seconds to wait per a ``Retry-After`` header, or None if it says nothing.
+
+    RFC 9110 allows both a delay in seconds and an HTTP-date; providers use both,
+    and taking ``float()`` of the date form used to raise straight through the
+    retry loop — killing the run on exactly the rate limit the retry exists for.
+    """
+    if not value:
+        return None
+    raw = value.strip()
+    try:
+        return max(0.0, min(float(raw), _MAX_RETRY_AFTER_SECONDS))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    delay = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, min(delay, _MAX_RETRY_AFTER_SECONDS))
+
+
 def _post_with_retries(
     url: str,
     headers: dict,
@@ -270,8 +302,8 @@ def _post_with_retries(
         try:
             resp = httpx.post(url, headers=headers, json=payload, timeout=timeout)
             if resp.status_code == 429 or resp.status_code >= 500:
-                retry_after = resp.headers.get("retry-after")
-                delay = float(retry_after) if retry_after else min(2 ** attempt, 30)
+                retry_after = _retry_after_seconds(resp.headers.get("retry-after"))
+                delay = retry_after if retry_after is not None else min(2 ** attempt, 30)
                 last_exc = LLMError(
                     f"HTTP {resp.status_code} from the provider: {resp.text[:200]}"
                 )
@@ -283,7 +315,13 @@ def _post_with_retries(
                 raise LLMError(
                     f"HTTP {resp.status_code} from the provider: {resp.text[:500]}"
                 )
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as e:
+                # A proxy or a wrong base_url answers 200 with HTML, not JSON.
+                raise LLMError(
+                    f"Non-JSON response from the provider: {resp.text[:200]!r}"
+                ) from e
         except httpx.RequestError as e:
             last_exc = e
             if attempt < max_retries:
@@ -302,21 +340,27 @@ def get_client(llm_cfg: dict) -> LLMClient:
     provider = llm_cfg.get("provider", "anthropic")
     base_url = llm_cfg.get("base_url")
     max_retries = int(llm_cfg.get("max_retries", 3))
-    timeout = float(llm_cfg.get("timeout_seconds", 120))
+    # An unset timeout means "whatever suits this provider": a subprocess that
+    # pays a CLI startup per call, or a local model generating on CPU, needs far
+    # more headroom than a hosted HTTP endpoint.
+    configured_timeout = llm_cfg.get("timeout_seconds")
+
+    def timeout_or(default: float) -> float:
+        return float(configured_timeout) if configured_timeout else default
 
     if provider == "anthropic":
         api_key = os.environ.get(llm_cfg.get("api_key_env", "ANTHROPIC_API_KEY"), "")
-        return AnthropicClient(api_key, base_url, max_retries, timeout)
+        return AnthropicClient(api_key, base_url, max_retries, timeout_or(120))
     if provider == "claude_code":
         return ClaudeCodeClient(
             executable=llm_cfg.get("claude_cli_path"),
             max_retries=max_retries,
-            timeout_seconds=float(llm_cfg.get("timeout_seconds", 300)),
+            timeout_seconds=timeout_or(300),
             extra_args=llm_cfg.get("claude_cli_args"),
         )
     if provider == "openai":
         api_key = os.environ.get(llm_cfg.get("api_key_env", "OPENAI_API_KEY"), "")
-        return OpenAIClient(api_key, base_url, max_retries, timeout)
+        return OpenAIClient(api_key, base_url, max_retries, timeout_or(120))
     if provider == "ollama":
-        return OllamaClient(base_url, max_retries, timeout)
+        return OllamaClient(base_url, max_retries, timeout_or(300))
     raise LLMError(f"Unsupported LLM provider: {provider!r}")

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from src.models import ClassifiedEntry, datetime_to_webkit_micros
 from src.writer import Writer, slugify
 
@@ -15,6 +17,13 @@ def _ce(cat, summary, url="", y=2026, m=7, d=10):
 def test_slugify():
     assert slugify("Philosophy and History") == "philosophy-and-history"
     assert slugify("Concepts / Ideas") == "concepts-ideas"
+
+
+def test_slugify_falls_back_for_names_that_transliterate_to_nothing():
+    # Would all collapse into one shared file if the fallback were a constant.
+    slugs = {slugify("Программирование"), slugify("日本語"), slugify("🎧")}
+    assert len(slugs) == 3
+    assert all(s.startswith("category-") for s in slugs)
 
 
 def _writer(tmp_path, group_by="month"):
@@ -56,11 +65,51 @@ def test_write_routes_by_visit_date_not_run_date(tmp_path):
 
 def test_group_by_days_buckets(tmp_path):
     w = _writer(tmp_path, group_by="days:10")
-    # period_start = 2026-07-01; day 3 -> bucket 0 (01-10); day 15 -> bucket 1 (11-20)
+    # Buckets are 10-day blocks anchored to a fixed epoch, so two dates 12 days
+    # apart land in two different folders.
     w.write([_ce("Books", "A", d=3), _ce("Books", "B", d=15)])
     names = sorted(p.name for p in (tmp_path / "out").iterdir())
-    assert "2026-07-01_2026-07-10" in names
-    assert "2026-07-11_2026-07-20" in names
+    assert names == ["2026-06-26_2026-07-05", "2026-07-06_2026-07-15"]
+
+
+def test_group_by_days_buckets_do_not_depend_on_the_period(tmp_path):
+    """The same visit date must land in the same folder whatever period is run."""
+    july = _writer(tmp_path / "a", group_by="days:10")
+    june = Writer(
+        base_dir=tmp_path / "b" / "out",
+        group_by="days:10",
+        file_format="txt",
+        period_start=datetime(2026, 6, 4, tzinfo=timezone.utc),
+        processed_ids_path=tmp_path / "b" / "ids.json",
+    )
+    visit = datetime(2026, 7, 3, tzinfo=timezone.utc)
+    assert july.bucket_name(visit) == june.bucket_name(visit)
+
+
+def test_invalid_group_by_is_rejected_before_any_work(tmp_path):
+    with pytest.raises(ValueError, match="invalid group_by"):
+        _writer(tmp_path, group_by="days:x")
+
+
+def test_slug_keeps_non_ascii_categories_apart(tmp_path):
+    w = _writer(tmp_path, group_by="month")
+    w.write([_ce("Программирование", "A"), _ce("日本語", "B")])
+    files = sorted(p.name for p in (tmp_path / "out" / "2026-07").iterdir())
+    assert len(files) == 2 and len(set(files)) == 2
+
+
+def test_colliding_category_slugs_get_separate_files(tmp_path):
+    w = Writer(
+        base_dir=tmp_path / "out",
+        group_by="month",
+        file_format="txt",
+        period_start=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        processed_ids_path=tmp_path / "ids.json",
+        category_order=["AI/ML", "AI & ML"],
+    )
+    w.write([_ce("AI/ML", "A"), _ce("AI & ML", "B")])
+    files = sorted(p.name for p in (tmp_path / "out" / "2026-07").iterdir())
+    assert len(files) == 2
 
 
 def test_group_by_all_single_folder(tmp_path):

@@ -11,12 +11,12 @@ llm:
   api_key_env: ANTHROPIC_API_KEY   # name of the environment variable holding the key
   # base_url: http://localhost:11434   # for ollama (the default is already correct)
   max_retries: 3
-  timeout_seconds: 120
+  timeout_seconds: 120             # leave empty for the provider's own default:
+                                   # 120s over HTTP, 300s for claude_code/ollama
   # --- provider: claude_code (uses the local Claude Code CLI + its
   #     subscription login instead of an API key; no api_key_env needed) ---
   # claude_cli_path: claude          # override if `claude` is not on PATH
   # claude_cli_args: []              # extra CLI flags, e.g. ["--effort", "low"]
-  # timeout_seconds: 300             # the CLI is slower to start than raw HTTP
 
 # --- History source ---
 source:
